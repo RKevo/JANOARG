@@ -15,7 +15,7 @@ RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 9
   m_Fog: 1
-  m_FogColor: {r: 0, g: 0, b: 0, a: 1}
+  m_FogColor: {r: 0.04777, g: 0.053225584, b: 0.085, a: 1}
   m_FogMode: 3
   m_FogDensity: 0.01
   m_LinearFogStart: 400
@@ -14996,7 +14996,7 @@ MonoBehaviour:
   Deviation: 0
   AccuracyValues: 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
   DiscreteValues: 0000000000000000
-  ScrollSpeed: 121
+  ScrollSpeed: 64
   SyncThreshold: 0.1
   PerfectHitWindow: 35
   GoodHitWindow: 200

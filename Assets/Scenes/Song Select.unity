@@ -15,7 +15,7 @@ RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 9
   m_Fog: 0
-  m_FogColor: {r: 0.014512456, g: 0.014512456, b: 0.014512456, a: 1}
+  m_FogColor: {r: 0.909804, g: 0.7607844, b: 0.47450984, a: 1}
   m_FogMode: 3
   m_FogDensity: 0.01
   m_LinearFogStart: 0
@@ -180,7 +180,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "123,456,789\u25CA"
+  m_text: "123,456 \u25CA"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: a45475bbff7d3214aa65958b1909c0b1, type: 2}
   m_sharedMaterial: {fileID: 5448809311310781862, guid: a45475bbff7d3214aa65958b1909c0b1, type: 2}
@@ -432,7 +432,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "123,456,789,012\xA4"
+  m_text: "123.45 M \xA4"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: a45475bbff7d3214aa65958b1909c0b1, type: 2}
   m_sharedMaterial: {fileID: 5448809311310781862, guid: a45475bbff7d3214aa65958b1909c0b1, type: 2}
@@ -1401,7 +1401,7 @@ MonoBehaviour:
       m_Calls: []
   m_text: 'RETURN TO
 
-    STAR MAP'
+    WORLD SELECTION'
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8ab617d4154d67b4db84b2b52fa348e8, type: 2}
   m_sharedMaterial: {fileID: -4314389113359939109, guid: 8ab617d4154d67b4db84b2b52fa348e8, type: 2}
@@ -1635,7 +1635,8 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "????????????????? \u2022 0000~0000 BPM \u2022 00m 00s"
+  m_text: "????????????????? \u2022 ????????????????? \u2022 0000~0000 BPM \u2022
+    00m 00s"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 3f796aa8b18de334cb25c2d1c591948a, type: 2}
   m_sharedMaterial: {fileID: -6645923801699503097, guid: 3f796aa8b18de334cb25c2d1c591948a, type: 2}
@@ -2536,7 +2537,7 @@ GameObject:
   - component: {fileID: 1712290308}
   - component: {fileID: 1712290307}
   m_Layer: 5
-  m_Name: Multiplier
+  m_Name: Essence
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2670,6 +2671,7 @@ GameObject:
   - component: {fileID: 1752704533}
   - component: {fileID: 1752704532}
   - component: {fileID: 1752704534}
+  - component: {fileID: 1752704535}
   m_Layer: 5
   m_Name: Profile
   m_TagString: Untagged
@@ -2762,6 +2764,24 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &1752704535
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1752704530}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7b2e24f6164899340ba46b933fed6d6d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  CoinCount: 0
+  OrbCount: 0
+  EssenceCount: 0
+  CoinLabel: {fileID: 126952830}
+  OrbLabel: {fileID: 278705379}
+  EssenceLabel: {fileID: 1712290307}
 --- !u!1 &1758898524
 GameObject:
   m_ObjectHideFlags: 0
@@ -2821,8 +2841,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: Selected Song
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: eeb455cf639f0a5498e8de9f8b091a2a, type: 2}
-  m_sharedMaterial: {fileID: -6954525552735352244, guid: eeb455cf639f0a5498e8de9f8b091a2a, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 4719076c77f184640b45cc189f0d1f5e, type: 2}
+  m_sharedMaterial: {fileID: 6949179962977730163, guid: 4719076c77f184640b45cc189f0d1f5e, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
