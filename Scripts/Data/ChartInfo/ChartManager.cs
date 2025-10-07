@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Unity.Collections;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -300,12 +301,15 @@ namespace JANOARG.Shared.Data.ChartInfo
         {
             Update(init, time, pos, main);
         }
+        
+        Vector3[] verts;
+        Vector2[] uvs;
 
         public void Update(Lane data, float time, float pos, ChartManager main)
         {
             CurrentLane = data;
-            
-            if (CurrentMesh == null) 
+
+            if (CurrentMesh == null)
                 CurrentMesh = new Mesh();
 
             var stepCount = 0;
@@ -315,14 +319,14 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             for (var a = 0; a < CurrentLane.LaneSteps.Count; a++)
             {
-                if (Steps.Count <= a) 
+                if (Steps.Count <= a)
                     Steps.Add(new LaneStepManager());
 
                 LaneStep step = null;
-                
+
                 if (Steps != null && Steps.Count == CurrentLane.LaneSteps.Count)
                     step = Steps[a].CurrentStep;
-                
+
                 step ??= (LaneStep)CurrentLane.LaneSteps[a].GetStoryboardableObject(pos);
 
                 if (step.Offset != Steps[a].CurrentStep?.Offset)
@@ -342,22 +346,28 @@ namespace JANOARG.Shared.Data.ChartInfo
 
                 Steps[a].CurrentStep = step;
 
-                stepCount += float.IsNaN(offset) 
+                stepCount += float.IsNaN(offset)
                     ? 1 : Mathf.CeilToInt((offset == Steps[a].Offset ? Steps[a].Offset > time ? 1 : 0 : Mathf.Clamp01((time - Steps[a].Offset) / (offset - Steps[a].Offset))) * (step.IsLinear ? 1 : 16));
 
                 offset = Steps[a].Offset;
             }
 
-            while (Steps.Count > CurrentLane.LaneSteps.Count) 
+            while (Steps.Count > CurrentLane.LaneSteps.Count)
                 Steps.RemoveAt(CurrentLane.LaneSteps.Count);
 
             var index = 0;
-            var verts = new Vector3[stepCount * 2];
-            var uvs = new Vector2[stepCount * 2];
+            var alloc = stepCount * 2;
+            verts ??= new Vector3[alloc];
+            uvs ??= new Vector2[alloc];
+            if (alloc > verts.Length)
+                verts = new Vector3[alloc];
+            if (alloc > uvs.Length)
+                uvs = new Vector2[alloc];
+            
             LaneStepManager next = null;
             CurrentDistance = float.NaN;
 
-            if (verts.Length > 0)
+            if (alloc > 0)
                 for (int a = Steps.Count - 1; a >= 0; a--)
                 {
                     LaneStepManager curr = Steps[a];
@@ -370,7 +380,7 @@ namespace JANOARG.Shared.Data.ChartInfo
                         // Debug.Log(index + "/" + verts.Length + " " + verts[index] + " " + verts[index + 1]);
                         index += 2;
 
-                        if (index >= verts.Length)
+                        if (index >= alloc)
                         {
                             CurrentDistance = curr.Distance + curr.CurrentStep.Speed * CurrentSpeed * (time - curr.Offset);
 
@@ -399,7 +409,7 @@ namespace JANOARG.Shared.Data.ChartInfo
                             break;
                         }
 
-                        if (index >= verts.Length) break;
+                        if (index >= alloc) break;
                     }
                     else
                     {
@@ -423,7 +433,7 @@ namespace JANOARG.Shared.Data.ChartInfo
 
                             index += 2;
 
-                            if (x == p || index >= verts.Length) break;
+                            if (x == p || index >= alloc) break;
                         }
 
                         if (p > 0)
@@ -433,7 +443,7 @@ namespace JANOARG.Shared.Data.ChartInfo
                             break;
                         }
 
-                        if (index >= verts.Length) break;
+                        if (index >= alloc) break;
                     }
 
                     next = curr;
@@ -442,8 +452,11 @@ namespace JANOARG.Shared.Data.ChartInfo
             if (float.IsNaN(CurrentDistance) && Steps.Count > 0) 
                 CurrentDistance = Steps[0].Distance + Steps[0].CurrentStep.Speed * CurrentSpeed * (time - Steps[0].Offset);
 
-            for (var a = 0; a < verts.Length; a++) uvs[a] = new Vector2(a % 2, verts[a].z);
-
+            for (var a = 0; a < alloc; a++) uvs[a] = new Vector2(a % 2, verts[a].z);
+            var nat_vert = new NativeArray<Vector3>(alloc, Allocator.Temp);
+            var nat_uv = new NativeArray<Vector2>(alloc, Allocator.Temp);
+            NativeArray<Vector3>.Copy(verts, nat_vert, alloc);
+            NativeArray<Vector2>.Copy(uvs, nat_uv, alloc);
             if (stepCount != _LastStepCount)
             {
                 CurrentMesh.Clear();
@@ -462,7 +475,7 @@ namespace JANOARG.Shared.Data.ChartInfo
             }
 
             main.ActiveLaneCount++;
-            main.ActiveLaneVerts += verts.Length;
+            main.ActiveLaneVerts += alloc;
             main.ActiveLaneTris += CurrentMesh.triangles.Length;
 
             FinalPosition = CurrentLane.Position;
@@ -472,9 +485,9 @@ namespace JANOARG.Shared.Data.ChartInfo
                 main.Groups[CurrentLane.Group]
                     .Get(ref FinalPosition, ref FinalRotation);
 
-            StartPosLocal = StartPos = verts[stepCount * 2 - 2] - Vector3.forward * CurrentDistance;
+            StartPosLocal = StartPos = verts[alloc - 2] - Vector3.forward * CurrentDistance;
             StartPos = FinalRotation * StartPos + FinalPosition;
-            EndPosLocal = EndPos = verts[stepCount * 2 - 1] - Vector3.forward * CurrentDistance;
+            EndPosLocal = EndPos = verts[alloc - 1] - Vector3.forward * CurrentDistance;
             EndPos = FinalRotation * EndPos + FinalPosition;
 
 
@@ -495,12 +508,12 @@ namespace JANOARG.Shared.Data.ChartInfo
                 Objects.RemoveAt(CurrentLane.Objects.Count);
             }
         }
-
+        List<Vector3> hold_verts = new();
+        List<Vector2> hold_uvs = new();
         public Mesh GetPartOfLane(float timeStart, float timeEnd, float xPos, float xLength)
         {
-            List<Vector3> verts = new();
-            List<Vector2> uvs = new();
-
+            hold_verts.Clear();
+            hold_uvs.Clear();
             for (int a = Steps.Count - 1; a >= 1; a--)
             {
                 LaneStepManager next = Steps[a];
@@ -511,7 +524,7 @@ namespace JANOARG.Shared.Data.ChartInfo
 
                 if (curr.Offset > timeEnd) continue;
 
-                if (verts.Count < 1)
+                if (hold_verts.Count < 1)
                 {
                     if (next.CurrentStep.IsLinear)
                     {
@@ -520,8 +533,8 @@ namespace JANOARG.Shared.Data.ChartInfo
                         Vector3 currEnd = Vector3.LerpUnclamped(curr.CurrentStep.StartPointPosition, curr.CurrentStep.EndPointPosition, xPos + xLength);
                         Vector3 nextStart = Vector3.LerpUnclamped(next.CurrentStep.StartPointPosition, next.CurrentStep.EndPointPosition, xPos);
                         Vector3 nextEnd = Vector3.LerpUnclamped(next.CurrentStep.StartPointPosition, next.CurrentStep.EndPointPosition, xPos + xLength);
-                        verts.Add(Vector3.Lerp(currStart, nextStart, pEnd) + Vector3.forward * dist);
-                        verts.Add(Vector3.Lerp(currEnd, nextEnd, pEnd) + Vector3.forward * dist);
+                        hold_verts.Add(Vector3.Lerp(currStart, nextStart, pEnd) + Vector3.forward * dist);
+                        hold_verts.Add(Vector3.Lerp(currEnd, nextEnd, pEnd) + Vector3.forward * dist);
 
                         // Debug.Log(index + "/" + verts.Length + " " + verts[index] + " " + verts[index + 1]);
                     }
@@ -535,10 +548,10 @@ namespace JANOARG.Shared.Data.ChartInfo
                         float x = pEnd;
                         dist = Mathf.Lerp(curr.Distance, next.Distance, x);
 
-                        verts.Add(new Vector3(Mathf.LerpUnclamped(currStart.x, nextStart.x, next.CurrentStep.StartEaseX.Get(x)),
+                        hold_verts.Add(new Vector3(Mathf.LerpUnclamped(currStart.x, nextStart.x, next.CurrentStep.StartEaseX.Get(x)),
                             Mathf.LerpUnclamped(currStart.y, nextStart.y, next.CurrentStep.StartEaseY.Get(x)), dist));
 
-                        verts.Add(new Vector3(Mathf.LerpUnclamped(currEnd.x, nextEnd.x, next.CurrentStep.EndEaseX.Get(x)),
+                        hold_verts.Add(new Vector3(Mathf.LerpUnclamped(currEnd.x, nextEnd.x, next.CurrentStep.EndEaseX.Get(x)),
                             Mathf.LerpUnclamped(currEnd.y, nextEnd.y, next.CurrentStep.EndEaseY.Get(x)), dist));
                     }
                 }
@@ -550,8 +563,8 @@ namespace JANOARG.Shared.Data.ChartInfo
                     Vector3 currEnd = Vector3.LerpUnclamped(curr.CurrentStep.StartPointPosition, curr.CurrentStep.EndPointPosition, xPos + xLength);
                     Vector3 nextStart = Vector3.LerpUnclamped(next.CurrentStep.StartPointPosition, next.CurrentStep.EndPointPosition, xPos);
                     Vector3 nextEnd = Vector3.LerpUnclamped(next.CurrentStep.StartPointPosition, next.CurrentStep.EndPointPosition, xPos + xLength);
-                    verts.Add(Vector3.Lerp(currStart, nextStart, pStart) + Vector3.forward * dist);
-                    verts.Add(Vector3.Lerp(currEnd, nextEnd, pStart) + Vector3.forward * dist);
+                    hold_verts.Add(Vector3.Lerp(currStart, nextStart, pStart) + Vector3.forward * dist);
+                    hold_verts.Add(Vector3.Lerp(currEnd, nextEnd, pStart) + Vector3.forward * dist);
 
                     // Debug.Log(index + "/" + verts.Length + " " + verts[index] + " " + verts[index + 1]);
                 }
@@ -568,10 +581,10 @@ namespace JANOARG.Shared.Data.ChartInfo
                         float x = Math.Max(i / 16f, pStart);
                         dist = Mathf.Lerp(curr.Distance, next.Distance, x);
 
-                        verts.Add(new Vector3(Mathf.LerpUnclamped(currStart.x, nextStart.x, next.CurrentStep.StartEaseX.Get(x)),
+                        hold_verts.Add(new Vector3(Mathf.LerpUnclamped(currStart.x, nextStart.x, next.CurrentStep.StartEaseX.Get(x)),
                             Mathf.LerpUnclamped(currStart.y, nextStart.y, next.CurrentStep.StartEaseY.Get(x)), dist));
 
-                        verts.Add(new Vector3(Mathf.LerpUnclamped(currEnd.x, nextEnd.x, next.CurrentStep.EndEaseX.Get(x)),
+                        hold_verts.Add(new Vector3(Mathf.LerpUnclamped(currEnd.x, nextEnd.x, next.CurrentStep.EndEaseX.Get(x)),
                             Mathf.LerpUnclamped(currEnd.y, nextEnd.y, next.CurrentStep.EndEaseY.Get(x)), dist));
 
                         if (x == pStart) break;
@@ -581,12 +594,12 @@ namespace JANOARG.Shared.Data.ChartInfo
                 if (pStart > 0) break;
             }
 
-            for (var a = 0; a < verts.Count; a++) uvs.Add(new Vector2(a % 2, verts[a].z));
+            for (var a = 0; a < hold_verts.Count; a++) hold_uvs.Add(new Vector2(a % 2, hold_verts[a].z));
 
             Mesh mesh = new();
-            mesh.SetVertices(verts);
-            mesh.SetUVs(0, uvs);
-            RemakeMesh(mesh, verts.Count / 2);
+            mesh.SetVertices(hold_verts);
+            mesh.SetUVs(0, hold_uvs);
+            RemakeMesh(mesh, hold_verts.Count / 2);
 
             return mesh;
         }
@@ -904,7 +917,7 @@ namespace JANOARG.Shared.Data.ChartInfo
         public Vector3 StartPos;
         public Vector3 EndPos;
 
-        public Mesh HoldMesh;
+        public Me   sh HoldMesh;
 
         public HitObjectManager(HitObject data, float time, LaneManager lane, ChartManager main)
         {

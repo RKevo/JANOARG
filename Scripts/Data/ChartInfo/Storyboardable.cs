@@ -89,10 +89,12 @@ namespace JANOARG.Shared.Data.ChartInfo
         public Storyboard Storyboard = new();
 
         public abstract TimestampType[] timestampTypes { get; }
+        protected Storyboardable cachedDisplayObject;
 
-        public Storyboardable GetStoryboardableObject(float time) 
+        public Storyboardable GetStoryboardableObject(float time)
         {
-            Storyboardable obj = (Storyboardable)MemberwiseClone();
+            cachedDisplayObject ??= (Storyboardable)MemberwiseClone();
+            Storyboardable obj = cachedDisplayObject;
 
             foreach (TimestampType timestampType in timestampTypes)
             {
