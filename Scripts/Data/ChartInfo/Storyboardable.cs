@@ -74,13 +74,11 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             _type_cache.Invalidate(); // Invalidate cache when timestamps change
             Timestamps.Sort((x, y) => x.Offset.CompareTo(y.Offset));
-
-            _TypeCache.Clear();
         }
         
         public void InvalidateCache()
         {
-            _TypeCache.Clear();
+            _type_cache.Invalidate();
         }
 
         public Timestamp[] FromType(TimestampIDs type)
