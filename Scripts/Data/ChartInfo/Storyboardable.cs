@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -48,18 +49,38 @@ namespace JANOARG.Shared.Data.ChartInfo
     }
 
     [Serializable]
-    public class Storyboard
+    public class Storyboard : IList<Timestamp>
     {
         public List<Timestamp> Timestamps = new();
         private TypeCache _type_cache = TypeCache.Create();
 
-
+        public int Count => Timestamps.Count;
+        public bool IsReadOnly => false;
+        public Timestamp this[int index] {
+            get
+            {
+                return Timestamps[index];
+            }
+            set
+            {
+                Timestamps[index] = value;
+                InvalidateCache();
+            }
+        }
         public void Add(Timestamp timestamp)
         {
             Timestamps.Add(timestamp);
             Timestamps.Sort((x, y) => x.Offset.CompareTo(y.Offset)); // Probably not a big deal; only called on file import
 
             _type_cache.Invalidate(); // Invalidate cache when timestamps change
+            Timestamps.Sort((x, y) => x.Offset.CompareTo(y.Offset));
+
+            _TypeCache.Clear();
+        }
+        
+        public void InvalidateCache()
+        {
+            _TypeCache.Clear();
         }
 
         public Timestamp[] FromType(TimestampIDs type)
@@ -79,7 +100,6 @@ namespace JANOARG.Shared.Data.ChartInfo
                 _type_cache.Set(type, array);
             }
             return array;
-
         }
 
         public Storyboard SelfReference()
@@ -89,6 +109,48 @@ namespace JANOARG.Shared.Data.ChartInfo
                 clone.Timestamps.Add(timestamp.DeepClone());
 
             return clone;
+        }
+
+        public int IndexOf(Timestamp item)
+        {
+            return Timestamps.IndexOf(item);
+        }
+        public void Insert(int index, Timestamp item)
+        {
+            Timestamps.Insert(index, item);
+            InvalidateCache();
+        }
+        public void RemoveAt(int index)
+        {
+            Timestamps.RemoveAt(index);
+            InvalidateCache();
+        }
+        public void Clear()
+        {
+            Timestamps.Clear();
+            InvalidateCache();
+        }
+        public bool Contains(Timestamp item)
+        {
+            return Timestamps.Contains(item);
+        }
+        public void CopyTo(Timestamp[] array, int arrayIndex)
+        {
+            Timestamps.CopyTo(array, arrayIndex);
+        }
+        public bool Remove(Timestamp item)
+        {
+            bool result = Timestamps.Remove(item);
+            InvalidateCache();
+            return result;
+        }
+        public IEnumerator<Timestamp> GetEnumerator()
+        {
+            return Timestamps.GetEnumerator();
+        }
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return Timestamps.GetEnumerator();
         }
 
         protected struct TypeCache
