@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace JANOARG.Shared.Data.ChartInfo
 {
@@ -80,9 +81,11 @@ namespace JANOARG.Shared.Data.ChartInfo
             }
         }
 
-        public static implicit operator double(BeatPosition a) => 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static implicit operator double(BeatPosition a) =>
             a.Number + (double)a.Numerator / a.Denominator;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator float(BeatPosition a) => 
             a.Number + (float)a.Numerator / a.Denominator;
 

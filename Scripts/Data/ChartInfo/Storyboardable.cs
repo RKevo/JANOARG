@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -49,43 +50,94 @@ namespace JANOARG.Shared.Data.ChartInfo
     [Serializable]
     public class Storyboard
     {
-        public  List<Timestamp>                 Timestamps = new();
-        private Dictionary<int, Timestamp[]> _TypeCache = new();
+        public List<Timestamp> Timestamps = new();
+        private TypeCache _type_cache = TypeCache.Create();
 
 
         public void Add(Timestamp timestamp)
         {
             Timestamps.Add(timestamp);
             Timestamps.Sort((x, y) => x.Offset.CompareTo(y.Offset)); // Probably not a big deal; only called on file import
-            
-            _TypeCache.Clear(); // Invalidate cache when timestamps change
+
+            _type_cache.Invalidate(); // Invalidate cache when timestamps change
         }
 
         public Timestamp[] FromType(TimestampIDs type)
         {
-            if (!_TypeCache.TryGetValue((int)type, out Timestamp[] array))
+            if (!_type_cache.TryGet(type, out Timestamp[] array))
             {
-                array = Timestamps.Where(x => x.ID == type).ToArray();
-                _TypeCache[(int)type] = array;
+                var ret = new List<Timestamp>();
+                for (int i = 0; i < Timestamps.Count; i++)
+                {
+                    var stmp = Timestamps[i];
+                    if (stmp.ID == type)
+                    {
+                        ret.Add(stmp);
+                    }
+                }
+                array = ret.ToArray();
+                _type_cache.Set(type, array);
             }
             return array;
 
         }
-    
+
         public Storyboard SelfReference()
         {
             var clone = new Storyboard();
-            foreach (Timestamp timestamp in Timestamps) 
+            foreach (Timestamp timestamp in Timestamps)
                 clone.Timestamps.Add(timestamp.DeepClone());
 
             return clone;
         }
+
+        protected struct TypeCache
+        {
+            static readonly int upper = (int)Enum.GetValues(typeof(TimestampIDs)).Cast<TimestampIDs>().Max();
+            static readonly int lower = (int)Enum.GetValues(typeof(TimestampIDs)).Cast<TimestampIDs>().Min();
+            Timestamp[][] backing;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public static TypeCache Create()
+            {
+                return new TypeCache
+                {
+                    backing = new Timestamp[upper + 1 - lower][]
+                };
+            }
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public readonly bool TryGet(TimestampIDs id, out Timestamp[] ret)
+            {
+                var idx = (int)id - lower;
+                var val = backing[idx];
+                if (val is not null)
+                {
+                    ret = val;
+                    return true;
+                }
+                ret = null;
+                return false;
+            }
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public readonly void Set(TimestampIDs id, Timestamp[] entry)
+            {
+                backing[(int)id - lower] = entry;
+            }
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public readonly void Invalidate()
+            {
+                Array.Clear(backing, 0, upper);
+            }
+
+            
+        }
+
     }
+    
 
     public abstract class Storyboardable
     {
         internal static readonly Array srTimestampIDValues = Enum.GetValues(typeof(TimestampIDs));
-        
+
         public Storyboard Storyboard = new();
 
         public abstract TimestampType[] timestampTypes { get; }
@@ -134,11 +186,11 @@ namespace JANOARG.Shared.Data.ChartInfo
         public virtual void Advance(float time)
         {
             // Initialize current value of each timestamp type if they don't exist
-            if (CurrentValues == null) 
+            if (CurrentValues == null)
             {
                 // Initialize array with size equal to number of enum values
                 CurrentValues = new float[srTimestampIDValues.Length];
-            
+
                 foreach (TimestampType timestampType in timestampTypes)
                     CurrentValues[(int)timestampType.ID] = timestampType.StoryboardGetter(this);
             }
@@ -150,11 +202,11 @@ namespace JANOARG.Shared.Data.ChartInfo
                 float value = CurrentValues[(int)timestampType.ID];
 
                 // Navigate forward
-                while (true) 
+                while (true)
                 {
                     // Get the next timestamp in the list
                     Timestamp timestamp = null;
-                    
+
                     foreach (Timestamp storyboardTimestamp in Storyboard.Timestamps)
                     {
                         if (timestampType.ID == storyboardTimestamp.ID)
@@ -163,7 +215,7 @@ namespace JANOARG.Shared.Data.ChartInfo
                             break;
                         }
                     }
-                
+
                     // Skip if there's no timestamp or it's not yet the start of the next timestamp
                     if (timestamp == null || (time < timestamp.Offset && CurrentTime < timestamp.Offset))
                         break;
@@ -174,10 +226,10 @@ namespace JANOARG.Shared.Data.ChartInfo
                         // NaN means lerp from the previous value
                         if (!float.IsNaN(timestamp.From))
                             CurrentValues[(int)timestampType.ID] = value = timestamp.From;
-                    
+
                         // Get the current value
                         value = Mathf.LerpUnclamped(value, timestamp.Target, timestamp.Easing.Get((time - timestamp.Offset) / timestamp.Duration));
-                    
+
                         break;
                     }
                     else

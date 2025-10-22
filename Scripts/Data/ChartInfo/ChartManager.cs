@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Unity.Collections;
+using Unity.Jobs;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -35,6 +37,8 @@ namespace JANOARG.Shared.Data.ChartInfo
             Update(time, pos);
         }
 
+        List<Task<(int, int)>> tasks = new();
+        List<(Lane,LaneManager)> to_update = new();
         public void Update(float time, float pos)
         {
             PalleteManager.Update(CurrentChart.Palette, pos);
@@ -42,6 +46,7 @@ namespace JANOARG.Shared.Data.ChartInfo
             HitObjectsRemaining = new[] { 0, 0 };
             FlicksRemaining = 0;
             ActiveLaneCount = ActiveHitCount = ActiveLaneVerts = ActiveLaneTris = 0;
+
 
             for (var a = 0; a < CurrentChart.Groups.Count; a++)
             {
@@ -64,6 +69,9 @@ namespace JANOARG.Shared.Data.ChartInfo
                 else
                     pair.Value.IsTouched = false;
 
+            // todo: nvm dont do this the perf is horrific
+            tasks.Clear();
+            to_update.Clear();
             for (var a = 0; a < CurrentChart.Lanes.Count; a++)
             {
                 var lane = (Lane)CurrentChart.Lanes[a].GetStoryboardableObject(pos);
@@ -71,8 +79,23 @@ namespace JANOARG.Shared.Data.ChartInfo
                 if (Lanes.Count <= a)
                     Lanes.Add(new LaneManager(lane, time, pos, this));
                 else
-                    Lanes[a].Update(lane, time, pos, this);
+                {
+                    var man = Lanes[a];
+                    tasks.Add(Task.Factory.StartNew(() =>
+                    {
+                        return man.MeshGen(lane, time, pos, this);
+                    }));
+                    to_update.Add((lane,man));
+                }
             }
+            Task.WaitAll(tasks.ToArray());
+            for (var a = 0; a < to_update.Count; a++)
+            {
+                var (lane, man) = to_update[a];
+                var (stepCount, alloc) = tasks[a].Result;
+                man.Update(lane, time, pos, this, stepCount, alloc);
+            }
+
 
             while (Lanes.Count > CurrentChart.Lanes.Count)
             {
@@ -93,13 +116,12 @@ namespace JANOARG.Shared.Data.ChartInfo
         }
     }
 
-
     public class PalleteManager
     {
         public Palette CurrentPallete;
 
         public List<LaneStyleManager> LaneStyles = new();
-        public List<HitStyleManager>  HitStyles  = new();
+        public List<HitStyleManager> HitStyles = new();
 
         public void Update(Palette pallete, float pos)
         {
@@ -149,10 +171,30 @@ namespace JANOARG.Shared.Data.ChartInfo
 
     public class LaneStyleManager
     {
-        public Material BaseLaneMaterial;
+        private Material _base_lane;
+        int laneHash;
+        public Material BaseLaneMaterial
+        {
+            get => _base_lane;
+            set
+            {
+                _base_lane = value;
+                laneHash = BaseLaneMaterial.name.GetHashCode();
+            }
+        }
         public Material LaneMaterial;
 
-        public Material BaseJudgeMaterial;
+        private Material _base_judge;
+        int judgeHash;
+        public Material BaseJudgeMaterial
+        {
+            get => _base_judge;
+            set
+            {
+                _base_judge = value;
+                judgeHash = BaseLaneMaterial.name.GetHashCode();
+            }
+        }
         public Material JudgeMaterial;
 
         public LaneStyleManager(LaneStyle style)
@@ -164,9 +206,9 @@ namespace JANOARG.Shared.Data.ChartInfo
         {
             // Debug.Log(style.LaneMaterial);
 
-            if (BaseLaneMaterial?.name != style.LaneMaterial) LaneMaterial = new Material(BaseLaneMaterial = Resources.Load<Material>("Materials/Lane/" + style.LaneMaterial));
+            if (laneHash != style.LaneMaterial.GetHashCode()) LaneMaterial = new Material(BaseLaneMaterial = Resources.Load<Material>("Materials/Lane/" + style.LaneMaterial));
 
-            if (BaseJudgeMaterial?.name != style.JudgeMaterial) JudgeMaterial = new Material(BaseJudgeMaterial = Resources.Load<Material>("Materials/Judge/" + style.LaneMaterial));
+            if (judgeHash != style.JudgeMaterial.GetHashCode()) JudgeMaterial = new Material(BaseJudgeMaterial = Resources.Load<Material>("Materials/Judge/" + style.LaneMaterial));
 
             if (LaneMaterial) LaneMaterial.SetColor(style.LaneColorTarget, style.LaneColor);
             if (JudgeMaterial) JudgeMaterial.SetColor(style.JudgeColorTarget, style.JudgeColor);
@@ -251,7 +293,7 @@ namespace JANOARG.Shared.Data.ChartInfo
 
         public void UpdatePosition(ChartManager main, string original = null)
         {
-            FinalPosition = CurrentGroup.Position;
+            FinalPosition = CurrentGroup.Position;  
             FinalRotation = Quaternion.Euler(CurrentGroup.Rotation);
             original ??= CurrentGroup.Group;
 
@@ -299,13 +341,75 @@ namespace JANOARG.Shared.Data.ChartInfo
 
         public LaneManager(Lane init, float time, float pos, ChartManager main)
         {
-            Update(init, time, pos, main);
+            var (stepCount, alloc) = MeshGen(init, time, pos, main);
+            Update(init, time, pos, main, stepCount, alloc);
         }
         
         Vector3[] verts;
         Vector2[] uvs;
+        int[] cached_tris;
+        Task meshGen;
 
-        public void Update(Lane data, float time, float pos, ChartManager main)
+        public void Update(Lane data, float time, float pos, ChartManager main, int stepCount, int alloc)
+        {
+            for (var a = 0; a < alloc; a++) uvs[a] = new Vector2(a % 2, verts[a].z);
+            var nat_vert = new NativeArray<Vector3>(alloc, Allocator.Temp);
+            var nat_uv = new NativeArray<Vector2>(alloc, Allocator.Temp);
+            NativeArray<Vector3>.Copy(verts, nat_vert, alloc);
+            NativeArray<Vector2>.Copy(uvs, nat_uv, alloc);
+            if (stepCount != _LastStepCount)
+            {
+                CurrentMesh.Clear();
+                CurrentMesh.SetVertices(verts);
+                CurrentMesh.SetUVs(0, uvs);
+                RemakeMesh(CurrentMesh, stepCount);
+                _LastStepCount = stepCount;
+            }
+            else
+            {
+                var tris = cached_tris;
+                CurrentMesh.Clear();
+                CurrentMesh.SetVertices(verts);
+                CurrentMesh.SetUVs(0, uvs);
+                CurrentMesh.SetTriangles(tris, 0);
+            }
+
+            main.ActiveLaneCount++;
+            main.ActiveLaneVerts += alloc;
+            main.ActiveLaneTris += cached_tris.Length;
+
+            FinalPosition = CurrentLane.Position;
+            FinalRotation = Quaternion.Euler(CurrentLane.Rotation);
+
+            if (!string.IsNullOrEmpty(CurrentLane.Group) && main.Groups.ContainsKey(CurrentLane.Group))
+                main.Groups[CurrentLane.Group]
+                    .Get(ref FinalPosition, ref FinalRotation);
+
+            StartPosLocal = StartPos = verts[alloc - 2] - Vector3.forward * CurrentDistance;
+            StartPos = FinalRotation * StartPos + FinalPosition;
+            EndPosLocal = EndPos = verts[alloc - 1] - Vector3.forward * CurrentDistance;
+            EndPos = FinalRotation * EndPos + FinalPosition;
+
+
+
+            for (var a = 0; a < CurrentLane.Objects.Count; a++)
+            {
+                var hit = (HitObject)CurrentLane.Objects[a]
+                    .GetStoryboardableObject(pos);
+
+                if (Objects.Count <= a) Objects.Add(new HitObjectManager(hit, time, this, main));
+                else
+                    Objects[a]
+                        .Update(hit, time, this, main);
+            }
+
+            while (Objects.Count > CurrentLane.Objects.Count)
+            {
+                Objects.RemoveAt(CurrentLane.Objects.Count);
+            }
+        }
+
+        public (int, int) MeshGen(Lane data, float time, float pos, ChartManager main)
         {
             CurrentLane = data;
 
@@ -363,7 +467,7 @@ namespace JANOARG.Shared.Data.ChartInfo
                 verts = new Vector3[alloc];
             if (alloc > uvs.Length)
                 uvs = new Vector2[alloc];
-            
+
             LaneStepManager next = null;
             CurrentDistance = float.NaN;
 
@@ -389,13 +493,13 @@ namespace JANOARG.Shared.Data.ChartInfo
                     }
                     else if (next.CurrentStep.IsLinear)
                     {
-                        float offsetLerpProgress = curr.Offset == next.Offset 
-                            ? curr.Offset < time 
-                                ? 1 : 0 
+                        float offsetLerpProgress = curr.Offset == next.Offset
+                            ? curr.Offset < time
+                                ? 1 : 0
                             : Mathf.Clamp01((time - curr.Offset) / (next.Offset - curr.Offset));
-                      
+
                         float dist = Mathf.Lerp(curr.Distance, next.Distance, offsetLerpProgress);
-                      
+
                         verts[index] = Vector3.Lerp(curr.CurrentStep.StartPointPosition, next.CurrentStep.StartPointPosition, offsetLerpProgress) + Vector3.forward * dist;
                         verts[index + 1] = Vector3.Lerp(curr.CurrentStep.EndPointPosition, next.CurrentStep.EndPointPosition, offsetLerpProgress) + Vector3.forward * dist;
 
@@ -413,11 +517,11 @@ namespace JANOARG.Shared.Data.ChartInfo
                     }
                     else
                     {
-                        float p = curr.Offset == next.Offset 
-                            ? curr.Offset < time 
-                                ? 1 : 0 
+                        float p = curr.Offset == next.Offset
+                            ? curr.Offset < time
+                                ? 1 : 0
                             : Mathf.Clamp01((time - curr.Offset) / (next.Offset - curr.Offset));
-                        
+
                         float dist = 0;
 
                         for (var i = 15; i >= 0; i--)
@@ -449,71 +553,16 @@ namespace JANOARG.Shared.Data.ChartInfo
                     next = curr;
                 }
 
-            if (float.IsNaN(CurrentDistance) && Steps.Count > 0) 
+            if (float.IsNaN(CurrentDistance) && Steps.Count > 0)
                 CurrentDistance = Steps[0].Distance + Steps[0].CurrentStep.Speed * CurrentSpeed * (time - Steps[0].Offset);
-
-            for (var a = 0; a < alloc; a++) uvs[a] = new Vector2(a % 2, verts[a].z);
-            var nat_vert = new NativeArray<Vector3>(alloc, Allocator.Temp);
-            var nat_uv = new NativeArray<Vector2>(alloc, Allocator.Temp);
-            NativeArray<Vector3>.Copy(verts, nat_vert, alloc);
-            NativeArray<Vector2>.Copy(uvs, nat_uv, alloc);
-            if (stepCount != _LastStepCount)
-            {
-                CurrentMesh.Clear();
-                CurrentMesh.SetVertices(verts);
-                CurrentMesh.SetUVs(0, uvs);
-                RemakeMesh(CurrentMesh, stepCount);
-                _LastStepCount = stepCount;
-            }
-            else
-            {
-                int[] tris = CurrentMesh.triangles;
-                CurrentMesh.Clear();
-                CurrentMesh.SetVertices(verts);
-                CurrentMesh.SetUVs(0, uvs);
-                CurrentMesh.SetTriangles(tris, 0);
-            }
-
-            main.ActiveLaneCount++;
-            main.ActiveLaneVerts += alloc;
-            main.ActiveLaneTris += CurrentMesh.triangles.Length;
-
-            FinalPosition = CurrentLane.Position;
-            FinalRotation = Quaternion.Euler(CurrentLane.Rotation);
-
-            if (!string.IsNullOrEmpty(CurrentLane.Group) && main.Groups.ContainsKey(CurrentLane.Group))
-                main.Groups[CurrentLane.Group]
-                    .Get(ref FinalPosition, ref FinalRotation);
-
-            StartPosLocal = StartPos = verts[alloc - 2] - Vector3.forward * CurrentDistance;
-            StartPos = FinalRotation * StartPos + FinalPosition;
-            EndPosLocal = EndPos = verts[alloc - 1] - Vector3.forward * CurrentDistance;
-            EndPos = FinalRotation * EndPos + FinalPosition;
-
-
-
-            for (var a = 0; a < CurrentLane.Objects.Count; a++)
-            {
-                var hit = (HitObject)CurrentLane.Objects[a]
-                    .GetStoryboardableObject(pos);
-
-                if (Objects.Count <= a) Objects.Add(new HitObjectManager(hit, time, this, main));
-                else
-                    Objects[a]
-                        .Update(hit, time, this, main);
-            }
-
-            while (Objects.Count > CurrentLane.Objects.Count)
-            {
-                Objects.RemoveAt(CurrentLane.Objects.Count);
-            }
+            return (stepCount, alloc);
         }
         List<Vector3> hold_verts = new();
         List<Vector2> hold_uvs = new();
         public Mesh GetPartOfLane(float timeStart, float timeEnd, float xPos, float xLength)
         {
-            hold_verts.Clear();
             hold_uvs.Clear();
+            hold_verts.Clear();
             for (int a = Steps.Count - 1; a >= 1; a--)
             {
                 LaneStepManager next = Steps[a];
@@ -599,88 +648,96 @@ namespace JANOARG.Shared.Data.ChartInfo
             Mesh mesh = new();
             mesh.SetVertices(hold_verts);
             mesh.SetUVs(0, hold_uvs);
-            RemakeMesh(mesh, hold_verts.Count / 2);
+            RemakeMesh_1(mesh, hold_verts.Count / 2);
 
             return mesh;
         }
 
-        public LanePosition GetLanePosition(float sec, float speed = 1f)
+        public bool GetLanePosition(float sec, out LanePosition lanePos, float speed = 1f)
         {
             int stepCount = Steps.Count;
-            
+
             // Early exit for invalid input or single step
             if (stepCount <= 1)
             {
-                if (stepCount == 0) return null;
-                
+                if (stepCount == 0)
+                {
+                    lanePos = default;
+                    return false;
+                }
+
                 var firstStep = Steps[0];
                 var firstLaneStep = CurrentLane.LaneSteps[0];
-                return new LanePosition
+                lanePos = new LanePosition
                 {
                     StartPosition = firstLaneStep.StartPointPosition,
                     EndPosition = firstLaneStep.EndPointPosition,
                     Offset = firstStep.Distance - firstStep.CurrentStep.Speed * speed * (firstStep.Offset - sec)
                 };
+                return true;
             }
-            
+
             var firstStepOffset = Steps[0].Offset;
             var lastStepOffset = Steps[stepCount - 1].Offset;
-            
+
             // Handle time before first step
             if (sec < firstStepOffset)
             {
                 var firstStep = Steps[0];
                 var firstLaneStep = CurrentLane.LaneSteps[0];
-                return new LanePosition
+                lanePos = new LanePosition
                 {
                     StartPosition = firstLaneStep.StartPointPosition,
                     EndPosition = firstLaneStep.EndPointPosition,
                     Offset = firstStep.Distance - firstStep.CurrentStep.Speed * speed * (firstStepOffset - sec)
                 };
+                return true;
             }
-            
+
             // Handle time after last step
             if (sec > lastStepOffset)
             {
                 var lastStep = Steps[stepCount - 1];
                 var lastLaneStep = CurrentLane.LaneSteps[stepCount - 1];
-                return new LanePosition
+                lanePos = new LanePosition
                 {
                     StartPosition = lastLaneStep.StartPointPosition,
                     EndPosition = lastLaneStep.EndPointPosition,
                     Offset = lastStep.Distance + lastStep.CurrentStep.Speed * speed * (sec - lastStepOffset)
                 };
+                return true;
             }
-            
+
             // Binary search for the correct step interval
             int stepIndex = FindStepIndex(sec);
-            
+
             var prev = Steps[stepIndex - 1];
             var prevStep = prev.CurrentStep;
             var current = Steps[stepIndex];
             var currentStep = current.CurrentStep;
-            
+
             float timeDelta = current.Offset - prev.Offset;
             float prevToCurrentProgress = (sec - prev.Offset) / timeDelta;
             float offsetValue = prev.Distance + currentStep.Speed * speed * (sec - prev.Offset);
-            
+
             if (currentStep.IsLinear)
             {
-                return new LanePosition
+                lanePos = new LanePosition
                 {
                     StartPosition = Vector2.LerpUnclamped(prevStep.StartPointPosition, currentStep.StartPointPosition, prevToCurrentProgress),
                     EndPosition = Vector2.LerpUnclamped(prevStep.EndPointPosition, currentStep.EndPointPosition, prevToCurrentProgress),
                     Offset = offsetValue
                 };
+                return true;
             }
-            
+
             // Non-linear interpolation
             float startEaseX = currentStep.StartEaseX.Get(prevToCurrentProgress);
             float startEaseY = currentStep.StartEaseY.Get(prevToCurrentProgress);
             float endEaseX = currentStep.EndEaseX.Get(prevToCurrentProgress);
             float endEaseY = currentStep.EndEaseY.Get(prevToCurrentProgress);
-            
-            return new LanePosition
+
+            lanePos = new LanePosition
             {
                 StartPosition = new Vector2(
                     Mathf.LerpUnclamped(prevStep.StartPointPosition.x, currentStep.StartPointPosition.x, startEaseX),
@@ -692,6 +749,7 @@ namespace JANOARG.Shared.Data.ChartInfo
                 ),
                 Offset = offsetValue
             };
+            return true;
         }
 
         // Binary search to find the step index - O(log n) instead of O(n)
@@ -738,8 +796,27 @@ namespace JANOARG.Shared.Data.ChartInfo
                 tris[a * 6 + 4] = a * 2 + 1;
                 tris[a * 6 + 5] = a * 2 + 3;
             }
-
             mesh.SetTriangles(tris, 0);
+            cached_tris = tris;
+        }
+
+
+        public void RemakeMesh_1(Mesh mesh, int stepCount)
+        {
+            var tris = new int[Mathf.Max((stepCount - 1) * 6, 0)];
+
+            for (var a = 0; a < stepCount - 1; a++)
+            {
+                tris[a * 6 + 0] = a * 2;
+                tris[a * 6 + 1] = a * 2 + 1;
+                tris[a * 6 + 2] = a * 2 + 2;
+
+                tris[a * 6 + 3] = a * 2 + 2;
+                tris[a * 6 + 4] = a * 2 + 1;
+                tris[a * 6 + 5] = a * 2 + 3;
+            }
+            mesh.SetTriangles(tris, 0);
+
         }
     }
 
@@ -917,7 +994,7 @@ namespace JANOARG.Shared.Data.ChartInfo
         public Vector3 StartPos;
         public Vector3 EndPos;
 
-        public Me   sh HoldMesh;
+        public Mesh HoldMesh;
 
         public HitObjectManager(HitObject data, float time, LaneManager lane, ChartManager main)
         {
@@ -954,7 +1031,7 @@ namespace JANOARG.Shared.Data.ChartInfo
             }
 
             // Main position calculations - only execute when time <= TimeEnd
-            LanePosition pos = lane.GetLanePosition(Mathf.Max(TimeStart, time), main.CurrentSpeed);
+            lane.GetLanePosition(Mathf.Max(TimeStart, time), out var pos, main.CurrentSpeed);
             Vector3 forwardedOffset = Vector3.forward * pos.Offset;
             
             // Cache data.Position to avoid multiple property access
