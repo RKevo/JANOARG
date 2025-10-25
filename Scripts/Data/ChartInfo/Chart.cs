@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -135,6 +136,17 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             return clone;
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (CameraController)dst;
+            d.Storyboard = Storyboard;
+            d.CameraPivot = CameraPivot;
+            d.CameraRotation = CameraRotation;
+            d.PivotDistance = PivotDistance;
+        }
     }
 
 // Style 
@@ -219,6 +231,18 @@ namespace JANOARG.Shared.Data.ChartInfo
             foreach (HitStyle hs in HitStyles) clone.HitStyles.Add(hs.DeepClone());
 
             return clone;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (Palette)dst;
+            d.Storyboard = Storyboard;
+            d.BackgroundColor = BackgroundColor;
+            d.InterfaceColor = InterfaceColor;
+            d.LaneStyles = LaneStyles;
+            d.HitStyles = HitStyles;
         }
     }
 
@@ -315,6 +339,20 @@ namespace JANOARG.Shared.Data.ChartInfo
             };
 
             return clone;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (LaneStyle)dst;
+            d.Storyboard = Storyboard;
+            d.LaneMaterial = LaneMaterial;
+            d.LaneColorTarget = LaneColorTarget;
+            d.LaneColor = LaneColor;
+            d.JudgeMaterial = JudgeMaterial;
+            d.JudgeColorTarget = JudgeColorTarget;
+            d.JudgeColor = JudgeColor;
         }
     }
 
@@ -444,6 +482,19 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             return clone;
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (HitStyle)dst;
+            d.MainMaterial = MainMaterial;
+            d.MainColorTarget = MainColorTarget;
+            d.NormalColor = NormalColor;
+            d.CatchColor = CatchColor;
+            d.HoldTailMaterial = HoldTailMaterial;
+            d.HoldTailColorTarget = HoldTailColorTarget;
+            d.HoldTailColor = HoldTailColor;
+        }
     }
 
     [System.Serializable]
@@ -518,10 +569,22 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             return clone;
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (LaneGroup)dst;
+            d.Storyboard = Storyboard;
+            d.Name = Name;
+            d.Position = Position;
+            d.Rotation = Rotation;
+            d.Group = Group;
+        }
     }
 
     [System.Serializable]
-    public class LanePosition
+    public struct LanePosition
     {
         [FormerlySerializedAs("StartPos")] public Vector2 StartPosition;
         [FormerlySerializedAs("EndPos")]   public Vector2 EndPosition;
@@ -691,6 +754,19 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             return clone;
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (Lane)dst;
+            d.Position = Position;
+            d.Rotation = Rotation;
+            d.Group = Group;
+            d.StyleIndex = StyleIndex;
+            d.Objects = Objects;
+            d.LaneSteps = LaneSteps;
+        }
     }
 
     [System.Serializable]
@@ -786,6 +862,21 @@ namespace JANOARG.Shared.Data.ChartInfo
 
             return clone;
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (LaneStep)dst;
+            d.Storyboard = Storyboard;
+            d.Offset = Offset;
+            d.StartPointPosition = StartPointPosition;
+            d.StartEaseX = StartEaseX;
+            d.StartEaseY = StartEaseY;
+            d.EndPointPosition = EndPointPosition;
+            d.EndEaseX = EndEaseX;
+            d.EndEaseY = EndEaseY;
+            d.Speed = Speed;
+        }
     }
 
     [System.Serializable]
@@ -842,6 +933,22 @@ namespace JANOARG.Shared.Data.ChartInfo
             };
 
             return clone;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void CopyInto(Storyboardable dst)
+        {
+            base.CopyInto(dst);
+            var d = (HitObject)dst;
+            d.Storyboard = Storyboard;
+            d.Type = Type;
+            d.Offset = Offset;
+            d.Position = Position;
+            d.Length = Length;
+            d.HoldLength = HoldLength;
+            d.Flickable = Flickable;
+            d.FlickDirection = FlickDirection;
+            d.StyleIndex = StyleIndex;
         }
     }
 
