@@ -923,7 +923,6 @@ public class PlayerInputManager : MonoBehaviour
             InitLogger(
                 $"Judgement-offset time: {judgementOffsetTime} (Current time: {Player.CurrentTime}, Offset: {Player.Settings.JudgmentOffset})");
 
-
             sr_HitQueueLoop.Begin();
             for (var a = 0; a < HitQueue.Count; a++) // Chart HitObject queue processor
             {
@@ -992,8 +991,7 @@ public class PlayerInputManager : MonoBehaviour
                     foreach (TouchClass touch in TouchClasses)
                         if (
                             isDiscreteHitObject &&
-                            Vector2.Distance(touch.Touch.screenPosition, hitIteration.HitCoord.Position) <=
-                            hitIteration.HitCoord.Radius
+                            hitIteration.IsScreenPointInHitBox(touch.Touch.screenPosition)
                         )
                         {
                             // Edge only. This block re-runs every frame the finger is in range, so
@@ -1057,33 +1055,13 @@ public class PlayerInputManager : MonoBehaviour
             sr_HoldQueueBlock.Begin();
             if (HoldQueue.Count != 0) // Hold note processor
             {
-                //// Camera handling and other extra stuff is done here to calculate hold note hitboxes and positions on the fly
-                //// As it has dynamic attributes as it progresses, unlike normal hitobjects.
-
-                float beat = PlayerScreen.sTargetSong.Timing.ToBeat((float)judgementOffsetTime); // Get current BPM
-
-                // Camera handling
-                var currentCamera =
-                    (CameraController)PlayerScreen.sTargetChart.Data.Camera
-                        .GetStoryboardableObject(
-                            beat); // Get camera data for the current
-
-                // beat
-
-                // Update transforms
-                Player.Pseudocamera.transform.position = currentCamera.CameraPivot;
-                Player.Pseudocamera.transform.eulerAngles = currentCamera.CameraRotation;
-                Player.Pseudocamera.transform.Translate(Vector3.back * currentCamera.PivotDistance);
-
                 for (var a = 0; a < HoldQueue.Count; a++)
                 {
                     HoldNoteClass holdNoteEntry = HoldQueue[a];
 
-                    //Debug.Log($"Processing hold note entry {a} at time {holdNoteEntry.HitObject.Time}.");
-
                     // If the hold note doesn't exist (it's already completed)
                     sr_HoldQueueProcessor.Begin();
-                    HoldQueue_Processor(holdNoteEntry, ref a, beat, judgementOffsetTime);
+                    HoldQueue_Processor(holdNoteEntry, ref a, judgementOffsetTime);
                     sr_HoldQueueProcessor.End();
                 }
             }
@@ -1243,7 +1221,7 @@ public class PlayerInputManager : MonoBehaviour
         }
     }
 
-    private void HoldQueue_Processor(HoldNoteClass holdNoteEntry, ref int queuePtr, float beat, double judgementOffsetTime)
+    private void HoldQueue_Processor(HoldNoteClass holdNoteEntry, ref int queuePtr, double judgementOffsetTime)
     {
         if (!holdNoteEntry.HitObject || holdNoteEntry.HitObject.IsReturned)
         {
@@ -1256,100 +1234,11 @@ public class PlayerInputManager : MonoBehaviour
 
         holdNoteEntry.UpdateDedicatedEffects(Time.deltaTime);
 
-        // Note position
-        var laneHoldNote =
-            (Lane)holdNoteEntry.HitObject.Lane.Original.GetStoryboardableObject(beat); // Which lane is the hold note on?
-
-        LanePosition
-            step = laneHoldNote.GetLanePosition(beat, beat, PlayerScreen.sTargetSong.Timing); // Get the lane position for the current beat
-
-        Vector3 startHoldPosition = laneHoldNote.Position +
-                                    Quaternion.Euler(laneHoldNote.Rotation) * step.StartPosition;
-
-        Vector3 endHoldPosition = laneHoldNote.Position +
-                                  Quaternion.Euler(laneHoldNote.Rotation) * step.EndPosition;
-
-        LaneGroupPlayer currentHoldGroupPlayer = holdNoteEntry.HitObject.Lane.Group;
-
-        //Debug.Log(
-        //    $"Got; Lane: {laneHoldNote.Name}, Start Position: {startHoldPosition}, End Position: {endHoldPosition}");
-
-        // Apply transforms in the group
-        while (currentHoldGroupPlayer) // Current LaneGroupPlayer still exists
-        {
-            var currentLaneGroup =
-                (LaneGroup)currentHoldGroupPlayer.Original
-                    .GetStoryboardableObject(
-                        beat); // Get the current lanegroup
-
-            startHoldPosition = currentLaneGroup.Position +
-                                Quaternion.Euler(currentLaneGroup.Rotation) * startHoldPosition; // Apply transform manually
-
-            endHoldPosition = currentLaneGroup.Position +
-                              Quaternion.Euler(currentLaneGroup.Rotation) * endHoldPosition;
-
-            currentHoldGroupPlayer = currentHoldGroupPlayer.Parent; // Go to the parent LaneGroupPlayer
-        }
-
-        //Debug.Log($"Transformed; Start Position: {startHoldPosition}, End Position: {endHoldPosition}");
-
-        var hitObject =
-            (HitObject)holdNoteEntry.HitObject.Original
-                .GetStoryboardableObject(
-                    beat); // Get the hitobject data for thecurrent beat
-
-        //Debug.Log(
-        //    $"Hold note hitobject data: Type: {hitObject.Type}, Hold Length: {hitObject.HoldLength}, Position: {hitObject.Position}");
-
-        // Calculate hitbox positions
-        // I dunno what lerp is but just go with it, I guess
-
-        Vector3 holdNoteLerpStart = Vector3.LerpUnclamped(
-            startHoldPosition,
-            endHoldPosition,
-            hitObject.Position
-        );
-
-        Vector3 holdNoteLerpEnd = Vector3.LerpUnclamped(
-            startHoldPosition,
-            endHoldPosition,
-            hitObject.Position + hitObject.Length
-        );
-
-        Vector2 holdNoteHitboxStart = Player.Pseudocamera.WorldToScreenPoint(holdNoteLerpStart);
-
-        Vector2 holdNoteHitboxEnd = Player.Pseudocamera.WorldToScreenPoint(holdNoteLerpEnd);
-
-        //Debug.Log($"Hold note hitbox start: {holdNoteHitboxStart}, end: {holdNoteHitboxEnd}");
-
-        holdNoteEntry.HitObject.HitCoord = new HitScreenCoord
-        {
-            Position = (holdNoteHitboxStart + holdNoteHitboxEnd) / 2,
-            Radius = Mathf.Max( 
-                Vector2.Distance(holdNoteHitboxStart, holdNoteHitboxEnd) / 2 + Player.ScaledExtraRadius,
-                Player.ScaledMinimumRadius
-            )
-        };
-
-        // Draw the hitobject radius
-        /*if (PlayerHitboxVisualizer.main)
-                    {
-                        PlayerHitboxVisualizer.main.DrawHitScreenCoordDebug(
-                            holdNoteEntry.HitObject.HitCoord,
-                            Color.green
-                        );
-                    }*/
-
-        //Debug.Log(
-        //    $"Hold note hitbox position: {holdNoteEntry.HitObject.HitCoord.Position}, radius: {holdNoteEntry.HitObject.HitCoord.Radius}");
-
-        // Hitbox checker
-        holdNoteEntry.AssignedTouch = null;
-
-        // Assigned a new touch
-        holdNoteEntry.AssignedTouch = TouchClasses.Find(touch => 
-                Vector2.Distance( touch.Touch .screenPosition, holdNoteEntry.HitObject .HitCoord .Position ) <= holdNoteEntry.HitObject.HitCoord .Radius // Be careful, it's <= not <
-        );
+        // Hitbox checker — the note's own baked box, the same rule taps and catches use. It is
+        // centred on the note (so the hold stays grabbable wherever its head is) and its box
+        // already covers Position/Length plus the extra radius.
+        holdNoteEntry.AssignedTouch = TouchClasses.Find(touch =>
+            holdNoteEntry.HitObject.IsScreenPointInHitBox(touch.Touch.screenPosition));
 
         // Taking advantage of inline checks, since List<T>.Find() can give null
         holdNoteEntry.IsPlayerHolding = holdNoteEntry.AssignedTouch != null;
@@ -1487,25 +1376,19 @@ public class PlayerInputManager : MonoBehaviour
         if (FlickTravel(touch, note) < flickDistanceThreshold)
             return false;
 
-        Vector2 offset = current - note.HitCoord.Position;
-        float radius = note.HitCoord.Radius;
+        // Containment is the note's own box, not a screen circle: the flick counts while the finger
+        // is still on the note. Once the finger is established on this note the box grows
+        // (osu!-style follow), so the flick's own travel cannot shake it off. A directional flick
+        // additionally has to point the right way.
+        float followScale = touch.DiscreteHitobjectIsInRange && touch.NearestDiscreteHitobject == note
+            ? FlickFollowScale
+            : 1f;
 
-        if (float.IsFinite(note.Current.FlickDirection)) // Directional
-        {
-            // Rotating the offset by +FlickDirection maps the flick axis onto +Y, so .x is the
-            // perpendicular distance from the beam. .y is deliberately unused — the beam runs
-            // indefinitely both ways, and which way the finger went is the angle check's job.
-            float perpendicular = (Quaternion.Euler(0, 0, note.Current.FlickDirection) * offset).x;
+        if (!note.IsScreenPointInHitBox(current, followScale)) return false;
 
-            if (Mathf.Abs(perpendicular) >= radius) return false;
-
-            if (!ValidateFlickDirection(note.Current.FlickDirection, touch.FlickTracker.FlickAngle))
-                return false;
-        }
-        else if (offset.magnitude >= radius * FlickFollowScale) // Omnidirectional: expanded circle
-        {
+        if (float.IsFinite(note.Current.FlickDirection) &&
+            !ValidateFlickDirection(note.Current.FlickDirection, touch.FlickTracker.FlickAngle))
             return false;
-        }
 
         // Committed, not judged. The DiscreteHitQueue pass scores it once the note is within a
         // perfect window of its own time, and that pass runs later in this same frame — so a flick
@@ -1543,16 +1426,17 @@ public class PlayerInputManager : MonoBehaviour
                         break;
                     }
 
-                    // Stage 1 — claim it. Plain hit radius, identical for directional and
-                    // omnidirectional notes; the beam governs only where the flick may travel,
+                    // Stage 1 — claim it. Lateral lane band, identical for directional and
+                    // omnidirectional notes; direction governs only where the flick may travel,
                     // never where the tap may land.
                     if (!touch.Tapped) continue;
+
+                    if (!hitIteration.IsScreenPointInHitBox(touch.Touch.startScreenPosition))
+                        continue;
 
                     float tapDistance = Vector2.Distance(
                         touch.Touch.startScreenPosition,
                         hitIteration.HitCoord.Position);
-
-                    if (tapDistance >= hitIteration.HitCoord.Radius) continue;
 
                     // Same note-priority rule the ordinary tap path uses: earliest note wins, and
                     // the closer one breaks a tie.
@@ -1613,25 +1497,26 @@ public class PlayerInputManager : MonoBehaviour
                 // never affect the outcome — a flick anywhere on screen cleared the note. Either
                 // end of the finger's travel counts, so a note swept through mid-flick still
                 // registers.
-                float startDistance =
-                    Vector2.Distance(touch.Touch.startScreenPosition, hitObject.HitCoord.Position);
-
-                float currentDistance =
-                    Vector2.Distance(touch.Touch.screenPosition, hitObject.HitCoord.Position);
-
-                distance = Mathf.Min(startDistance, currentDistance);
+                distance = Vector2.Distance(touch.Touch.screenPosition, hitObject.HitCoord.Position);
 
                 // Follow expansion. Once the discrete-hitobject bookkeeping already believes this
-                // finger belongs to this note, widen the circle so the flick's own travel cannot
+                // finger belongs to this note, widen the lane band so the flick's own travel cannot
                 // shake it off. That bookkeeping is set after HitobjectProcessor runs, so a note
                 // can only expand from the second frame a finger is on it — in range first, then
-                // it grows, which is the order we want anyway.
-                float containment = hitObject.HitCoord.Radius;
+                // it grows, which is the order we want anyway. Either end of the finger's travel
+                // counts, so a note swept through mid-flick still registers.
+                float followScale =
+                    touch.DiscreteHitobjectIsInRange && touch.NearestDiscreteHitobject == hitObject
+                        ? FlickFollowScale
+                        : 1f;
 
-                if (touch.DiscreteHitobjectIsInRange && touch.NearestDiscreteHitobject == hitObject)
-                    containment *= FlickFollowScale;
+                bool startOnBand = hitObject.IsScreenPointInHitBox(
+                    touch.Touch.startScreenPosition, followScale);
 
-                if (startDistance > containment && currentDistance > containment)
+                bool currentOnBand = hitObject.IsScreenPointInHitBox(
+                    touch.Touch.screenPosition, followScale);
+
+                if (!startOnBand && !currentOnBand)
                     return false;
 
                 // With no tap frame to anchor to, the gesture is the entire confirmation.
@@ -1666,15 +1551,18 @@ public class PlayerInputManager : MonoBehaviour
             case HitObject.HitType.Normal:
                 foreach (TouchClass touch in TouchClasses)
                 {
-                    float distance;
+                    if (!touch.Tapped) continue;
+
+                    // The note's own baked box instead of a screen circle around the note.
+                    if (!hitIteration.IsScreenPointInHitBox(touch.Touch.screenPosition))
+                        continue;
+
+                    float distance = Vector2.Distance(
+                        touch.Touch.screenPosition, hitIteration.HitCoord.Position);
 
                     var discreteTapProtectionPassed = false;
 
                     if (
-                        touch.Tapped &&
-                        (
-                            distance = Vector2.Distance(touch.Touch.screenPosition, hitIteration.HitCoord.Position)
-                        ) < hitIteration.HitCoord.Radius &&
                         (
                             discreteTapProtectionPassed =
                                 !( // Safeguard to prevent false 'early' taps while the player intends to catch notes
@@ -1741,9 +1629,12 @@ public class PlayerInputManager : MonoBehaviour
             case HitObject.HitType.Catch:
                 foreach (TouchClass touch in TouchClasses)
                 {
+                    // The note's own baked box instead of a screen circle around the note.
+                    if (!hitIteration.IsScreenPointInHitBox(touch.Touch.screenPosition))
+                        continue;
+
                     float distance = Vector2.Distance(touch.Touch.screenPosition, hitIteration.HitCoord.Position);
 
-                    if (distance < hitIteration.HitCoord.Radius)
                     {
                         bool shouldAssign =
                             !hitIteration.InDiscreteHitQueue && // Slow down on the assigning, due to the nature of catch notes
