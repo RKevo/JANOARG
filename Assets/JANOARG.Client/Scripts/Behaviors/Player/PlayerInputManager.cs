@@ -1548,7 +1548,7 @@ public class PlayerInputManager : MonoBehaviour
                         break;
                     }
 
-                    // Stage 1 — claim it. Lateral lane band, identical for directional and
+                    // Stage 1 — claim it. The note's band, identical for directional and
                     // omnidirectional notes; direction governs only where the flick may travel,
                     // never where the tap may land.
                     if (!touch.Tapped) continue;
@@ -1625,7 +1625,7 @@ public class PlayerInputManager : MonoBehaviour
                 distance = Vector2.Distance(touch.Touch.screenPosition, hitObject.HitCoord.Position);
 
                 // Follow expansion. Once the discrete-hitobject bookkeeping already believes this
-                // finger belongs to this note, widen the lane band so the flick's own travel cannot
+                // finger belongs to this note, widen the band so the flick's own travel cannot
                 // shake it off. That bookkeeping is set after HitobjectProcessor runs, so a note
                 // can only expand from the second frame a finger is on it — in range first, then
                 // it grows, which is the order we want anyway. Either end of the finger's travel
@@ -1678,7 +1678,7 @@ public class PlayerInputManager : MonoBehaviour
                 {
                     if (!touch.Tapped) continue;
 
-                    // The note's own baked box instead of a screen circle around the note.
+                    // The note's own baked band.
                     if (!hitIteration.IsScreenPointInHitBox(touch.Touch.screenPosition))
                         continue;
 
@@ -1732,7 +1732,7 @@ public class PlayerInputManager : MonoBehaviour
             case HitObject.HitType.Catch:
                 foreach (TouchClass touch in TouchClasses)
                 {
-                    // The note's own baked box instead of a screen circle around the note.
+                    // The note's own baked band.
                     if (!hitIteration.IsScreenPointInHitBox(touch.Touch.screenPosition))
                         continue;
 
