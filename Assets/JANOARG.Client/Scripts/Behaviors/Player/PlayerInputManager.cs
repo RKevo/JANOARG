@@ -1912,18 +1912,16 @@ public class PlayerInputManager : MonoBehaviour
                         touch.NearestDiscreteHitobject != null &&
                         touch.NearestDiscreteHitobject.Current.Type == HitObject.HitType.Catch;
 
-                    // The one escape is a tap that is genuinely on the normal — flawless, or coincident
-                    // with the catch, or one the original hitbox heuristic recognises. That is not a
-                    // premature trigger, so it is allowed even while a catch owns the touch.
+                    // The one escape is a tap that is genuinely on the normal — flawless, coincident
+                    // with the catch, or more centred on the normal than on the catch in band terms.
+                    // That is not a premature trigger, so it is allowed even while a catch owns the
+                    // touch.
                     bool legitimateHit =
                         onCatch &&
                         (Math.Abs(hitobjectTimingDelta) <= Player.PerfectWindow ||
                          Mathf.Approximately(hitIteration.Time, touch.NearestDiscreteHitobject.Time) ||
-                         Mathf.Approximately(
-                             Vector3.Distance(
-                                 hitIteration.HitCoord.Position,
-                                 touch.NearestDiscreteHitobject.HitCoord.Position),
-                             hitIteration.HitCoord.Radius / 2));
+                         hitIteration.LateralOffsetRatio(touch.Touch.screenPosition) <
+                         touch.NearestDiscreteHitobject.LateralOffsetRatio(touch.Touch.screenPosition));
 
                     bool discreteTapProtectionPassed = !onCatch || legitimateHit;
 
