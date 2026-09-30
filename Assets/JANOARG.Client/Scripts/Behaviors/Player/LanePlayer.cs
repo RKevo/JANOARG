@@ -48,6 +48,15 @@ namespace JANOARG.Client.Behaviors.Player
         // THIS IS NOT THREAD SAFE
         private readonly List<Vector3> _Verts = new(2048);
         private readonly List<int>     _Tris  = new(1024);
+
+        // Vertex count of the index buffer currently uploaded to _Mesh. f_addLine emits exactly
+        // two vertices and six fixed indices per line, so the triangle list is a pure function of
+        // _Verts.Count — the indices only need re-uploading when that count changes.
+        private int _UploadedIndexCount = -1;
+
+        // Read-only views for JanoargProfilerSampler (custom Profiler counters).
+        internal int MeshVertexCount => _Mesh != null ? _Mesh.vertexCount           : 0;
+        internal int MeshIndexCount  => _Mesh != null ? (int)_Mesh.GetIndexCount(0) : 0;
         
         static readonly ProfilerMarker sr_TimestampRemove = new("Lane UpdateMesh: Remove Timestamps");
         static readonly ProfilerMarker sr_MeshCalc = new("Lane UpdateMesh: Calculate advance");
@@ -471,10 +480,30 @@ namespace JANOARG.Client.Behaviors.Player
             _HasBuiltMeshOnce = true;
 
             sr_MeshUpdater.Begin();
-            // Actually update mesh data
-            _Mesh.Clear(false);
+            // Actually update mesh data.
+            // Clear() is omitted: the setters overwrite from index 0, avoiding its per-frame
+            // reallocation. SetVertices validates the mesh's *current* index buffer against the new
+            // vertex array, so when the topology shrinks the stale indices (which reference vertices
+            // that no longer exist) have to be dropped first or Unity throws.
+            if (_Verts.Count < _UploadedIndexCount)
+                _Mesh.SetTriangles(Array.Empty<int>(), 0, false, 0);
+
             _Mesh.SetVertices(_Verts);
-            _Mesh.SetTriangles(_Tris, 0, true);
+
+            if (_Verts.Count != _UploadedIndexCount)
+            {
+                // Topology changed, so re-upload indices. Assigning triangles also recalculates
+                // the bounds from the current vertices, so no separate bounds pass is needed here.
+                _Mesh.SetTriangles(_Tris, 0, true, 0);
+                _UploadedIndexCount = _Verts.Count;
+            }
+            else
+            {
+                // Topology unchanged: the indices already on the mesh are still correct, but
+                // SetVertices does not recalculate bounds and the vertices have moved, so refresh
+                // them without paying for another index copy/validation.
+                _Mesh.RecalculateBounds();
+            }
             sr_MeshUpdater.End();
         }
 
@@ -841,9 +870,26 @@ namespace JANOARG.Client.Behaviors.Player
                 previousStepEndPointPosition = currentStepEndPointPosition;
             }
 
-            mesh.Clear();
+            // Same upload discipline as the lane body: Clear is unnecessary because both setters
+            // resize and overwrite from index 0, and the hold-tail index list is a pure function of
+            // the vertex count, so it is only re-uploaded when that count changed since this mesh's
+            // last upload. SetVertices does not recalculate bounds, so on the (common) unchanged
+            // frames the bounds are refreshed directly instead of via a full triangle assignment.
+            // Stale, now-too-large indices must be dropped before SetVertices or it throws.
+            if (_Verts.Count < hit.UploadedHoldIndexCount)
+                mesh.SetTriangles(Array.Empty<int>(), 0, false, 0);
+
             mesh.SetVertices(_Verts);
-            mesh.SetTriangles(_Tris, 0);
+
+            if (_Verts.Count != hit.UploadedHoldIndexCount)
+            {
+                mesh.SetTriangles(_Tris, 0, true, 0);
+                hit.UploadedHoldIndexCount = _Verts.Count;
+            }
+            else
+            {
+                mesh.RecalculateBounds();
+            }
             // hit.HoldMesh.mesh = mesh;
         }
 
@@ -861,16 +907,19 @@ namespace JANOARG.Client.Behaviors.Player
     }
 
     /// <summary>
-    ///     A note's baked, screen-space hitbox: a band centred on the note.
+    ///     A note's baked, screen-space hitbox: the lane swept from the note.
     /// </summary>
     /// <remarks>
     ///     <para>
     ///         <see cref = "LateralHalfVec"/> is the note's half-span along its own start→end
     ///         (the cross-section, including the extra lateral headroom), as a screen vector from
-    ///         the centre. <see cref = "MedialAxis"/> is the projected z axis — the direction the
-    ///         lane scrolls with time. The band is the lateral span swept along the medial axis
-    ///         (up toward the visual lane and down as extrapolation), so containment only measures
-    ///         the component perpendicular to <see cref = "MedialAxis"/>.
+    ///         the centre. <see cref = "MedialAxis"/> is the projected scroll/path direction and
+    ///         <see cref = "VanishingPoint"/> its projection's vanishing point. The band is the
+    ///         angular sector from that point through the note's two lateral extremes — the lane's
+    ///         perspective wedge, which converges to the vanishing point and extends indefinitely
+    ///         away from it (below the note, toward the player). When the scroll direction is
+    ///         parallel to the image plane there is no finite vanishing point and the sector
+    ///         degenerates to a constant-width strip along <see cref = "MedialAxis"/>.
     ///     </para>
     ///     <para>
     ///         <see cref = "Center"/> is the note's screen centre (at the judgement line) so hit
@@ -884,5 +933,13 @@ namespace JANOARG.Client.Behaviors.Player
         public Vector2 Center;
         public Vector2 LateralHalfVec;
         public Vector2 MedialAxis;
+        public Vector2 VanishingPoint;
+        public bool    HasVanishingPoint;
+
+        /// <summary>
+        ///     The lane points (nearly) straight at the camera, so its projected geometry carries no
+        ///     information and the band falls back to a radius around the note.
+        /// </summary>
+        public bool UseRadius;
     }
 }

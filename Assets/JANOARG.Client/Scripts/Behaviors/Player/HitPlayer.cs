@@ -28,6 +28,12 @@ namespace JANOARG.Client.Behaviors.Player
         public MeshFilter   HoldMesh;
         public MeshRenderer HoldRenderer;
 
+        // Vertex count of the index buffer currently uploaded to HoldMesh's Mesh, or -1 if the
+        // mesh has none. The hold-tail triangle list is a pure function of the vertex count (each
+        // generated line adds two vertices and six fixed indices), so the indices only need
+        // re-uploading when that count changes. Reset whenever the mesh is cleared or pooled.
+        public int UploadedHoldIndexCount = -1;
+
         public MeshFilter   FlickMesh;
         public MeshRenderer FlickRenderer;
 
@@ -69,6 +75,7 @@ namespace JANOARG.Client.Behaviors.Player
             IsTapped = false;
             IsReturned = false;
             IsPendingJudgement = false;
+            UploadedHoldIndexCount = -1;
 
             // UpdateMesh below bails if GetZPosition throws, which would leave a pooled
             // instance wearing the previous note's baked Z and transform.
@@ -169,32 +176,105 @@ namespace JANOARG.Client.Behaviors.Player
         }
 
         /// <summary>
-        ///     The note's depth along the lane at the draw clock. Lower is closer to the camera /
-        ///     judgement line, i.e. more "in front" — used to break hitbox overlaps.
-        /// </summary>
-        public double Frontness => CurrentPosition;
-
-        /// <summary>
-        ///     Band containment against the seek-then-baked <see cref = "HitBox"/>.
+        ///     The note's depth in the projection camera's space at the draw clock. Lower is closer
+        ///     to that camera / the judgement line, i.e. more "in front" — used to break hitbox
+        ///     overlaps.
         /// </summary>
         /// <remarks>
-        ///     The band is the note's lateral half-vector swept along the medial (z/scroll) axis, so
-        ///     only the component perpendicular to <see cref = "HitScreenBox.MedialAxis"/> is
-        ///     measured; the along-scroll component never rejects a tap. <paramref name = "marginScale"/>
-        ///     grows the band around the note for osu!-style flick follow.
+        ///     Deliberately not the lane-local scroll z: a lane carries Position/Rotation storyboards
+        ///     and can sit in a rotated group, so its local z does not order notes on screen. Depth
+        ///     along the camera's own forward does, and it stays comparable across lanes. The input
+        ///     loop poses <c>Pseudocamera</c> at the current chart camera before reading this.
+        /// </remarks>
+        public double Frontness
+        {
+            get
+            {
+                Camera cam = PlayerScreen.sMain ? PlayerScreen.sMain.Pseudocamera : null;
+
+                return cam
+                    ? cam.transform.InverseTransformPoint(transform.position).z
+                    : CurrentPosition;
+            }
+        }
+
+        /// <summary>
+        ///     Sector containment against the seek-then-baked <see cref = "HitBox"/>.
+        /// </summary>
+        /// <remarks>
+        ///     The band is the lane swept from the note: the angular sector from the projection's
+        ///     vanishing point through the note's two lateral extremes — converging to the vanishing
+        ///     point and extending indefinitely away from it, toward the player. When the scroll
+        ///     direction is parallel to the image plane there is no finite vanishing point and it
+        ///     degenerates to a constant-width strip along <see cref = "HitScreenBox.MedialAxis"/>;
+        ///     when the note itself is below the accessibility minimum it falls back to a radius.
+        ///     <paramref name = "marginScale"/> widens the region for osu!-style flick follow.
         /// </remarks>
         /// <param name = "screenPoint"> The screen-space point to test. </param>
-        /// <param name = "marginScale"> Grow the band around its centre. </param>
-        public bool IsScreenPointInHitBox(Vector2 screenPoint, float marginScale = 1f)
+        /// <param name = "marginScale"> Grow the region around the note. </param>
+        public bool IsScreenPointInHitBox(Vector2 screenPoint, float marginScale = 1f) =>
+            LateralOffsetRatio(screenPoint) <= marginScale;
+
+        /// <summary>
+        ///     How far off the note's centre the point sits across the band, as a fraction of the
+        ///     half-width (0 = dead centre, 1 = at the edge).
+        /// </summary>
+        /// <remarks>
+        ///     The band-space equivalent of "how close is the tap", for comparing two overlapping
+        ///     bands: screen-centre distance says nothing useful once the band sweeps the whole
+        ///     scroll column. For a wedge it is the tap's angular position within the sector; for a
+        ///     strip, its perpendicular offset; for a sub-minimum note, the plain radius ratio.
+        ///     Points beyond the vanishing point are off the note.
+        /// </remarks>
+        public float LateralOffsetRatio(Vector2 screenPoint)
         {
+            // Too small to shape: judge it as the accessibility radius circle.
+            if (HitBox.UseRadius)
+            {
+                float radius = HitBox.LateralHalfVec.magnitude;
+
+                if (radius < 0.0001f) return float.PositiveInfinity;
+
+                return Vector2.Distance(screenPoint, HitBox.Center) / radius;
+            }
+
+            if (HitBox.HasVanishingPoint)
+            {
+                Vector2 apex = HitBox.VanishingPoint;
+                Vector2 a = HitBox.Center + HitBox.LateralHalfVec - apex;
+                Vector2 b = HitBox.Center - HitBox.LateralHalfVec - apex;
+                Vector2 q = screenPoint - apex;
+
+                float reference = Cross(a, b);
+
+                if (Mathf.Abs(reference) >= 0.000001f)
+                {
+                    float alpha = Cross(q, b) / reference;
+                    float beta = Cross(a, q) / reference;
+                    float sum = alpha + beta;
+
+                    return sum > 0f ? Mathf.Abs(alpha - beta) / sum : float.PositiveInfinity;
+                }
+            }
+
             Vector2 medialAxis = HitBox.MedialAxis;
             Vector2 perpendicular = new Vector2(-medialAxis.y, medialAxis.x);
 
             float halfWidth = Mathf.Abs(Vector2.Dot(HitBox.LateralHalfVec, perpendicular));
+
+            // Floor the perpendicular width with the accessibility minimum, so extreme camera roll
+            // (lateral span nearly parallel to the medial axis) cannot collapse a note to unhittable.
+            float floor = PlayerScreen.sMain ? PlayerScreen.sMain.ScaledMinimumRadius : 0f;
+            halfWidth = Mathf.Max(halfWidth, floor);
+
+            if (halfWidth < 0.0001f) return float.PositiveInfinity;
+
             float lateral = Mathf.Abs(Vector2.Dot(screenPoint - HitBox.Center, perpendicular));
 
-            return lateral <= halfWidth * marginScale;
+            return lateral / halfWidth;
         }
+
+        private static float Cross(Vector2 a, Vector2 b) => a.x * b.y - a.y * b.x;
 
         public void UpdateMesh()
         {

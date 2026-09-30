@@ -203,6 +203,12 @@ namespace JANOARG.Client.Behaviors.Player
         private readonly List<(float CueTime, LanePlayer Lane)> _PendingLanes = new();
         private int _PendingLaneCursor;
 
+        // Diagnostic lane-removal logging. Debug.Log allocates the message plus a captured stack
+        // trace, and this fires once per lane culled — a burst at section boundaries shows up as a
+        // GC spike. Kept behind a const so builds compile the calls (and their string interpolation)
+        // out entirely until explicitly needed.
+        private const bool LogLaneRemoval = false;
+
         private double _LastDSPTime;
         private double _MusicStartDSP;  // DSP time at which Music.PlayScheduled was called
 
@@ -297,22 +303,126 @@ namespace JANOARG.Client.Behaviors.Player
         // -----------------------------------------------------------------
         private const int HitPlayerPoolPrewarm = 64;
         private readonly Stack<HitPlayer> _HitPlayerPool = new();
+        private int _HitPlayersCreated;
+
+        // Read-only views for JanoargProfilerSampler (custom Profiler counters).
+        internal int PendingLaneCount      => _PendingLanes.Count - _PendingLaneCursor;
+        internal int HitPlayerPoolCount    => _HitPlayerPool.Count;
+        internal int HitPlayersInUseCount  => _HitPlayersCreated - _HitPlayerPool.Count;
+
+        internal int ActiveHitObjectCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < Lanes.Count; i++)
+                    count += Lanes[i].HitObjects.Count;
+                return count;
+            }
+        }
+
+        internal int ActiveLaneRendererCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < Lanes.Count; i++)
+                    if (Lanes[i].gameObject.activeSelf)
+                        count++;
+                return count;
+            }
+        }
+
+        internal int LaneVertexCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < Lanes.Count; i++)
+                    count += Lanes[i].MeshVertexCount;
+                return count;
+            }
+        }
+
+        internal int LaneTriangleCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < Lanes.Count; i++)
+                    count += Lanes[i].MeshIndexCount / 3;
+                return count;
+            }
+        }
+
+        internal int ActiveHoldMeshCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < Lanes.Count; i++)
+                {
+                    List<HitPlayer> hits = Lanes[i].HitObjects;
+                    for (int j = 0; j < hits.Count; j++)
+                        if (hits[j].HoldMesh != null && hits[j].HoldMesh.gameObject.activeSelf)
+                            count++;
+                }
+                return count;
+            }
+        }
 
         private void PrewarmHitPlayerPool()
         {
             for (int i = 0; i < HitPlayerPoolPrewarm; i++)
             {
                 HitPlayer player = Instantiate(HitSample, HitPlayerPoolHolder);
+                _HitPlayersCreated++;
                 player.gameObject.SetActive(false);
+                PrewarmHoldMesh(player);
                 _HitPlayerPool.Push(player);
             }
         }
 
+        /// <summary>
+        ///     Creates a pooled player's hold-tail renderer and Mesh up front, so the native mesh /
+        ///     renderer allocation happens here during loading rather than the first time the note is
+        ///     used for a hold mid-song (a Mesh.CreateMesh hitch).
+        /// </summary>
+        private void PrewarmHoldMesh(HitPlayer player)
+        {
+            if (player.HoldRenderer != null)
+                return;
+
+            MeshRenderer holdRenderer = Instantiate(HoldSample, HitPlayerPoolHolder);
+            MeshFilter   filter       = holdRenderer.GetComponent<MeshFilter>();
+
+            if (filter == null)
+            {
+                // Malformed sample; fall back to the lazy path in UpdateHoldMesh.
+                Destroy(holdRenderer.gameObject);
+                return;
+            }
+
+            filter.mesh = new Mesh();
+            filter.mesh.MarkDynamic();
+
+            holdRenderer.gameObject.SetActive(false);
+            player.HoldRenderer = holdRenderer;
+            player.HoldMesh     = filter;
+        }
+
         public HitPlayer BorrowHitPlayer(Transform parent)
         {
-            HitPlayer player = _HitPlayerPool.Count > 0
-                ? _HitPlayerPool.Pop()
-                : Instantiate(HitSample, HitPlayerPoolHolder);
+            HitPlayer player;
+            if (_HitPlayerPool.Count > 0)
+            {
+                player = _HitPlayerPool.Pop();
+            }
+            else
+            {
+                player = Instantiate(HitSample, HitPlayerPoolHolder);
+                _HitPlayersCreated++;
+            }
 
             player.transform.SetParent(parent);
             player.gameObject.SetActive(true);
@@ -328,6 +438,18 @@ namespace JANOARG.Client.Behaviors.Player
                 if (player.HoldMesh.mesh != null)
                     player.HoldMesh.mesh.Clear();
                 player.HoldMesh.gameObject.SetActive(false);
+
+                // The hold mesh was cleared, so its baked index buffer is gone too; force the
+                // next UpdateHoldMesh to re-upload indices for whatever geometry it rebuilds.
+                player.UploadedHoldIndexCount = -1;
+
+                // Keep the hold renderer with the pooled player. It is created under the lane's
+                // Holder on use, and lanes are destroyed when culled — without reparenting it would
+                // go down with the lane and a fresh Mesh would be created on the next hold, which
+                // is the mid-song Mesh.CreateMesh spike. Anchoring it to the pool makes the renderer
+                // and its Mesh live for the life of the pool and be reused.
+                if (player.HoldRenderer != null)
+                    player.HoldRenderer.transform.SetParent(HitPlayerPoolHolder, false);
             }
 
             player.gameObject.SetActive(false);
@@ -543,7 +665,14 @@ namespace JANOARG.Client.Behaviors.Player
             const float TARGET_ASPECT = 7 / 4f;
             float targetHeight = Mathf.Min(Screen.height, Screen.width / TARGET_ASPECT);
             float camRatio = targetHeight / Screen.height;
-            CommonSys.sMain.MainCamera.fieldOfView = Mathf.Atan2(Mathf.Tan(30 * Mathf.Deg2Rad), camRatio) * 2 * Mathf.Rad2Deg;
+            float fieldOfView = Mathf.Atan2(Mathf.Tan(30 * Mathf.Deg2Rad), camRatio) * 2 * Mathf.Rad2Deg;
+
+            CommonSys.sMain.MainCamera.fieldOfView = fieldOfView;
+
+            // The hit areas are baked and posed through Pseudocamera, so it has to share the render
+            // view's projection. The canvas is the phone's view and its aspect varies; a fixed FOV
+            // would scale every band relative to what the player actually sees.
+            Pseudocamera.fieldOfView = fieldOfView;
 
             yield return new WaitForEndOfFrame();
         }
@@ -634,10 +763,12 @@ namespace JANOARG.Client.Behaviors.Player
                 scrollSpeed * PlayerScreen.sMain.Speed * deltaSeconds);
 
             // Apply the lane-group chain (root first).
+            // Compose immediate parent -> root. startLocal is already in the lane's parent (the
+            // immediate group's) space, so the innermost transform applies first; reversing this
+            // order would apply the root last and put the band somewhere the lane is not drawn.
             var groupChain = new List<LaneGroupPlayer>();
             LaneGroupPlayer g = laneInGroup;
             while (g) { groupChain.Add(g); g = g.Parent; }
-            groupChain.Reverse();
 
             foreach (LaneGroupPlayer grp in groupChain)
             {
@@ -659,24 +790,67 @@ namespace JANOARG.Client.Behaviors.Player
             Vector2 center = (hitStart + hitEnd) / 2f;
             Vector2 lateralHalf = (hitEnd - hitStart) / 2f;
             float lateralLength = lateralHalf.magnitude;
-            Vector2 lateralAxis = lateralLength > 0.0001f ? lateralHalf / lateralLength : Vector2.right;
+
+            // Medial (up/down) direction first, so a degenerate lateral span can fall back to its
+            // perpendicular instead of a screen-absolute axis.
+            Vector3 noteCenterWorld = (p0 + p1) / 2f;
+            Vector2 medialScreen = (Vector2)camera.WorldToScreenPoint(noteCenterWorld + medialLocal) - center;
+            Vector2 medialAxis = medialScreen.sqrMagnitude > 0.000001f
+                ? medialScreen.normalized
+                : lateralLength > 0.0001f
+                    ? new Vector2(-lateralHalf.y, lateralHalf.x) / lateralLength
+                    : Vector2.up;
+
+            Vector2 lateralAxis = lateralLength > 0.0001f
+                ? lateralHalf / lateralLength
+                : new Vector2(-medialAxis.y, medialAxis.x);
 
             // Extra radius is lateral headroom only ("slightly wider than it seems"), with the same
             // accessibility floor the original radius bake used.
             float halfWidth = Mathf.Max(lateralLength + extraRadius, minimumRadius);
             lateralHalf = lateralAxis * halfWidth;
 
-            Vector3 noteCenterWorld = (p0 + p1) / 2f;
-            Vector2 medialScreen = (Vector2)camera.WorldToScreenPoint(noteCenterWorld + medialLocal) - center;
-            Vector2 medialAxis = medialScreen.sqrMagnitude > 0.000001f
-                ? medialScreen.normalized
-                : new Vector2(-lateralAxis.y, lateralAxis.x);
+            // A lane pointing (nearly) straight at the camera along the view ray projects its scroll
+            // direction to nothing and hides its own tail, so its screen geometry carries no
+            // information: judge such a note as a radius rather than a wedge. Short notes are NOT
+            // this — their minimum width is already enforced by the floor above.
+            const float LANE_FACING_COSINE = 0.966f; // within ~15 degrees of the view ray
+
+            Vector3 toNote = noteCenterWorld - camera.transform.position;
+            float medialLength = medialLocal.magnitude;
+            bool useRadius = medialLength < 0.000001f ||
+                             (toNote.sqrMagnitude > 0.000001f &&
+                              Mathf.Abs(Vector3.Dot(medialLocal, toNote)) >
+                              LANE_FACING_COSINE * medialLength * toNote.magnitude);
+
+            // Vanishing point of the projected scroll direction: the point at infinity along the
+            // lane's path, under this camera. Absent (direction parallel to the image plane) the
+            // wedge degenerates to a constant-width strip.
+            Vector4 clip = camera.projectionMatrix * camera.worldToCameraMatrix *
+                           new Vector4(medialLocal.x, medialLocal.y, medialLocal.z, 0f);
+            Vector2 clipXY = new Vector2(clip.x, clip.y);
+            float clipXYLength = clipXY.magnitude;
+            bool hasVanishingPoint = clipXYLength > 1e-9f
+                ? Mathf.Abs(clip.w) > 1e-2f * clipXYLength
+                : Mathf.Abs(clip.w) > 1e-9f;
+
+            Vector2 vanishingPoint = default;
+
+            if (hasVanishingPoint)
+            {
+                Vector2 ndc = clipXY / clip.w;
+                vanishingPoint = camera.ViewportToScreenPoint(
+                    new Vector3(ndc.x * 0.5f + 0.5f, ndc.y * 0.5f + 0.5f, 0f));
+            }
 
             return new HitScreenBox
             {
                 Center = center,
                 LateralHalfVec = lateralHalf,
-                MedialAxis = medialAxis
+                MedialAxis = medialAxis,
+                VanishingPoint = vanishingPoint,
+                HasVanishingPoint = hasVanishingPoint,
+                UseRadius = useRadius
             };
         }
 
@@ -784,7 +958,7 @@ namespace JANOARG.Client.Behaviors.Player
                         {
                             TotalExScore += 1;
 
-                            if (!float.IsNaN(laneHitobject.FlickDirection))
+                            if (float.IsFinite(laneHitobject.FlickDirection))
                                 TotalExScore += 1;
                         }
 
@@ -1368,12 +1542,16 @@ namespace JANOARG.Client.Behaviors.Player
                     if (lane == null || lane.MarkedForRemoval)
                     {
                         Lanes.RemoveAt(i);
-                        Debug.Log($"[LaneRemove] Removed lane {i} from scene.");
+
+                        if (LogLaneRemoval)
+                            Debug.Log($"[LaneRemove] Removed lane {i} from scene.");
                     }
                 }
                 catch (MissingReferenceException)
                 {
-                    Debug.LogWarning($"[LaneRemove] Lane {i} is null.");
+                    if (LogLaneRemoval)
+                        Debug.LogWarning($"[LaneRemove] Lane {i} is null.");
+
                     Lanes.RemoveAt(i);
                 }
             }
@@ -1627,7 +1805,7 @@ namespace JANOARG.Client.Behaviors.Player
             if (isFlickable)
             {
                 score += 1;
-                if (!float.IsNaN(flickDirection)) // Directional flick bonus
+                if (float.IsFinite(flickDirection)) // Directional flick bonus
                     score += 1;
             }
             
