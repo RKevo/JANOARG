@@ -174,7 +174,7 @@ namespace JANOARG.Client.Behaviors.Player
             }
             while (i > 0)
             {
-                if (timing.ToSeconds(steps[i - 1]) > timeSec)
+                if (timing.ToSeconds(steps[i - 1].Offset) > timeSec)
                 {
                     i -= 1;
                     cachedStep = steps[i];
@@ -280,6 +280,10 @@ namespace JANOARG.Client.Behaviors.Player
             var type = sb.timestampTypes[tindex];
             // this call mutates (yikes)
             var list = sb.Storyboard.FromType(type.ID);
+            if (list.Length == 0)
+            {
+                return;
+            }
             var last = list.LastOrDefault();
             if (beat >= last.Offset)
             {

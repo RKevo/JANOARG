@@ -936,7 +936,7 @@ namespace JANOARG.Client.Behaviors.Player
                     var laneSampler = new StoryboardableMultisampler(lane);
                     
                     var camera = Pseudocamera;
-                    var cameraSampler = new StoryboardableMultisampler(sTargetChart.Data.Camera);
+                    var cameraSampler = new StoryboardableMultisampler(sTargetChart.Data.Camera.GetStoryboardableObject(0f));
 
                     var groupChain = new List<LaneGroupPlayer>();
                     LaneGroupPlayer g = laneInGroup;
