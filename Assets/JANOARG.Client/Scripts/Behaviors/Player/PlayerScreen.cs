@@ -930,6 +930,8 @@ namespace JANOARG.Client.Behaviors.Player
                     var cindex = 0;
                     var lane = instancedLane.Original;
                     var timing = sTargetSong.Timing;
+                    var extraRadius = ScaledExtraRadius;
+                    var minimumRadius = ScaledMinimumRadius;
                     
                     var laneSampler = new StoryboardableMultisampler(lane);
                     
@@ -965,10 +967,6 @@ namespace JANOARG.Client.Behaviors.Player
                         var beat = laneHitobject.Offset;
                         laneSampler.Resample(beat);
                         cameraSampler.Resample(beat);
-
-
-                        CameraController hitObjectCamera =
-                            (CameraController)sTargetChart.Data.Camera.GetStoryboardableObject(laneHitobject.Offset);
                         Pseudocamera.transform.localPosition = new Vector3(
                             cameraSampler.Get(CameraPivot_X),
                             cameraSampler.Get(CameraPivot_Y),
@@ -1039,26 +1037,69 @@ namespace JANOARG.Client.Behaviors.Player
                         Vector2 hitStart = camera.WorldToScreenPoint(p0);
                         Vector2 hitEnd = camera.WorldToScreenPoint(p1);
 
-                        var center = (hitStart + hitEnd) / 2f;
-                        var lateralHalf = (hitEnd - hitStart) / 2f;
-                        var lateralLength = lateralHalf.magnitude;
-                        Vector2 lateralAxis = lateralLength > 0.0001f ? lateralHalf / lateralLength : Vector2.right;
+                        Vector2 center = (hitStart + hitEnd) / 2f;
+                        Vector2 lateralHalf = (hitEnd - hitStart) / 2f;
+                        float lateralLength = lateralHalf.magnitude;
+
+                        // Medial (up/down) direction first, so a degenerate lateral span can fall back to its
+                        // perpendicular instead of a screen-absolute axis.
+                        Vector3 noteCenterWorld = (p0 + p1) / 2f;
+                        Vector2 medialScreen = (Vector2)camera.WorldToScreenPoint(noteCenterWorld + medialLocal) - center;
+                        Vector2 medialAxis = medialScreen.sqrMagnitude > 0.000001f
+                            ? medialScreen.normalized
+                            : lateralLength > 0.0001f
+                                ? new Vector2(-lateralHalf.y, lateralHalf.x) / lateralLength
+                                : Vector2.up;
+
+                        Vector2 lateralAxis = lateralLength > 0.0001f
+                            ? lateralHalf / lateralLength
+                            : new Vector2(-medialAxis.y, medialAxis.x);
 
                         // Extra radius is lateral headroom only ("slightly wider than it seems"), with the same
                         // accessibility floor the original radius bake used.
-                        var halfWidth = Mathf.Max(lateralLength + ScaledExtraRadius, ScaledMinimumRadius);
+                        float halfWidth = Mathf.Max(lateralLength + extraRadius, minimumRadius);
                         lateralHalf = lateralAxis * halfWidth;
 
-                        var noteCenterWorld = (p0 + p1) / 2f;
-                        var medialScreen = (Vector2)camera.WorldToScreenPoint(noteCenterWorld + medialLocal) - center;
-                        var medialAxis = medialScreen.sqrMagnitude > 0.000001f
-                            ? medialScreen.normalized
-                            : new Vector2(-lateralAxis.y, lateralAxis.x);
+                        // A lane pointing (nearly) straight at the camera along the view ray projects its scroll
+                        // direction to nothing and hides its own tail, so its screen geometry carries no
+                        // information: judge such a note as a radius rather than a wedge. Short notes are NOT
+                        // this — their minimum width is already enforced by the floor above.
+                        const float LANE_FACING_COSINE = 0.966f; // within ~15 degrees of the view ray
+
+                        Vector3 toNote = noteCenterWorld - camera.transform.position;
+                        float medialLength = medialLocal.magnitude;
+                        bool useRadius = medialLength < 0.000001f ||
+                                        (toNote.sqrMagnitude > 0.000001f &&
+                                        Mathf.Abs(Vector3.Dot(medialLocal, toNote)) >
+                                        LANE_FACING_COSINE * medialLength * toNote.magnitude);
+
+                        // Vanishing point of the projected scroll direction: the point at infinity along the
+                        // lane's path, under this camera. Absent (direction parallel to the image plane) the
+                        // wedge degenerates to a constant-width strip.
+                        Vector4 clip = camera.projectionMatrix * camera.worldToCameraMatrix *
+                                    new Vector4(medialLocal.x, medialLocal.y, medialLocal.z, 0f);
+                        Vector2 clipXY = new Vector2(clip.x, clip.y);
+                        float clipXYLength = clipXY.magnitude;
+                        bool hasVanishingPoint = clipXYLength > 1e-9f
+                            ? Mathf.Abs(clip.w) > 1e-2f * clipXYLength
+                            : Mathf.Abs(clip.w) > 1e-9f;
+
+                        Vector2 vanishingPoint = default;
+
+                        if (hasVanishingPoint)
+                        {
+                            Vector2 ndc = clipXY / clip.w;
+                            vanishingPoint = camera.ViewportToScreenPoint(
+                                new Vector3(ndc.x * 0.5f + 0.5f, ndc.y * 0.5f + 0.5f, 0f));
+                        }
                         instancedLane.HitBoxes.Add(new HitScreenBox
                         {
                             Center = center,
                             LateralHalfVec = lateralHalf,
-                            MedialAxis = medialAxis
+                            MedialAxis = medialAxis,
+                            VanishingPoint = vanishingPoint,
+                            HasVanishingPoint = hasVanishingPoint,
+                            UseRadius = useRadius
                         });
                     }
 
