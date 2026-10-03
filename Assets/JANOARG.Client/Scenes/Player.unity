@@ -10818,7 +10818,7 @@ AudioSource:
   m_Enabled: 1
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 2925592824023460059, guid: 606287d1c8c9886669e259bcd1fd7af4, type: 2}
-  m_audioClip: {fileID: 0}
+  m_audioClip: {fileID: 8300000, guid: a2ecfa606abfbff2598a1f32535e5ae1, type: 3}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -12462,8 +12462,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d6a77452eee572143885d7f2de9a957c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  RunChart: {fileID: 0}
-  Chart: {fileID: 0}
+  RunChart: {fileID: 5022602860645237092, guid: a383c2a0a90e86e15a7d6cbe0a4ca76a, type: 3}
+  Chart: {fileID: 5022602860645237092, guid: db5dcfdc8a099c49ba0096942e296493, type: 3}
   Music: {fileID: 1395341278}
   Hitsounds: {fileID: 1395341278}
   Pseudocamera: {fileID: 939693537}
@@ -12524,7 +12524,9 @@ MonoBehaviour:
   IsReady: 0
   IsPlaying: 0
   AlreadyInitialised: 0
+  ChartOrigin: -5
   CurrentTime: -5
+  PlaybackTime: -5
   TotalExScore: 0
   CurrentExScore: 0
   PerfectCount: 0
@@ -12552,6 +12554,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Player: {fileID: 1551788791}
   Autoplay: 0
+  FlickFollowScale: 2.4
+  FlickTravelRatio: 0.375
   UpdatePerSecond: NaN
   Delta: 21.332ms
   TouchClassesCount: 0

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using JANOARG.Client.Behaviors.Common;
 using JANOARG.Client.Behaviors.SongSelect;
 using JANOARG.Client.UI;
@@ -936,12 +937,11 @@ namespace JANOARG.Client.Behaviors.Player
                     var laneSampler = new StoryboardableMultisampler(lane);
                     
                     var camera = Pseudocamera;
-                    var cameraSampler = new StoryboardableMultisampler(sTargetChart.Data.Camera.GetStoryboardableObject(0f));
+                    var cameraSampler = new StoryboardableMultisampler(sTargetChart.Data.Camera);
 
                     var groupChain = new List<LaneGroupPlayer>();
                     LaneGroupPlayer g = laneInGroup;
                     while (g) { groupChain.Add(g); g = g.Parent; }
-                    groupChain.Reverse();
                     var groupChainWatcher = new List<StoryboardableMultisampler>(groupChain.Count);
                     foreach (var player in groupChain)
                     {
@@ -967,72 +967,84 @@ namespace JANOARG.Client.Behaviors.Player
                         var beat = laneHitobject.Offset;
                         laneSampler.Resample(beat);
                         cameraSampler.Resample(beat);
-                        Pseudocamera.transform.localPosition = new Vector3(
+                        var data = laneHitobject;
+                        camera.transform.localPosition = new Vector3(
                             cameraSampler.Get(CameraPivot_X),
                             cameraSampler.Get(CameraPivot_Y),
                             cameraSampler.Get(CameraPivot_Z)
                         );
-                        Pseudocamera.transform.localEulerAngles = new Vector3(
+                        camera.transform.localEulerAngles = new Vector3(
                             cameraSampler.Get(CameraRotation_X),
                             cameraSampler.Get(CameraRotation_Y),
                             cameraSampler.Get(CameraRotation_Z)
                         );;
-                        Pseudocamera.transform.Translate(Vector3.back * cameraSampler.Get(PivotDistance));
-                        
-                        var laneEuler = new Vector3(
+                        camera.transform.Translate(Vector3.back * cameraSampler.Get(PivotDistance));
+                        var _laneEuler = new Vector3(
                             laneSampler.Get(OffsetRotation_X),
                             laneSampler.Get(OffsetRotation_Y),
                             laneSampler.Get(OffsetRotation_Z)
                         );
-                        var lanePosition = new Vector3(
+                        var _lane_Position = new Vector3(
                             laneSampler.Get(Offset_X),
                             laneSampler.Get(Offset_Y),
                             laneSampler.Get(Offset_Z)
                         );
-                        var (lanePos, index) = lane.laneLocalPositionWithoutOffset(beat, timing, cindex);
+                        // problem vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+                        var _lane = (Lane)lane.GetStoryboardableObject(beat);
+                        var laneEuler = _laneEuler;
+                        var lane_Position = _lane_Position;
+                        Debug.Log($"Position: {_lane.Position} : {_lane_Position}");
+                        Debug.Log($"Rotation: {_lane.Rotation} : {_laneEuler}");
+
+                        (LanePosition positionStep, int index) = lane.laneLocalPositionWithoutOffset(beat, timing, cindex);
                         cindex = index;
-                        var rot = Quaternion.Euler(laneEuler);
+                        Quaternion laneRot = Quaternion.Euler(laneEuler);
+                        Vector3 startLocal = laneRot * positionStep.StartPosition + lane_Position;
+                        Vector3 endLocal = laneRot * positionStep.EndPosition + lane_Position;
 
-                        var start = rot * lanePos.StartPosition + lanePosition;
-                        var end = rot * lanePos.EndPosition + lanePosition;
-
+                        // Medial (up/down) direction: the note's 3D path tangent over a small beat step.
                         const float MEDIAL_DELTA_BEAT = 0.05f;
-                        var beatAhead = beat + MEDIAL_DELTA_BEAT;
-                        var (lanePosAhead, _) = lane.laneLocalPositionWithoutOffset(beatAhead, timing, cindex);
-                        var localCenter = laneHitobject.Position + laneHitobject.Length * 0.5f;
-                        var strideCenter = Vector2.LerpUnclamped(lanePos.StartPosition, lanePos.EndPosition, localCenter);
-                        var strideCenterAhead = Vector2.LerpUnclamped(lanePosAhead.StartPosition, lanePosAhead.EndPosition, localCenter);
-                        
-                        var noteSeconds = timing.ToSeconds(beat);
-                        var deltaSeconds = timing.ToSeconds(beatAhead) - noteSeconds;
-                        var scrollSpeed = lane.ceilStepOrLastWithSeconds(noteSeconds, timing, cindex).Speed;
-                        var medialLocal = rot * new Vector3(
-                            strideCenterAhead.x - strideCenter.x,
-                            strideCenterAhead.y - strideCenter.y,
-                            scrollSpeed * PlayerScreen.sMain.Speed * deltaSeconds
-                        );
+
+                        (LanePosition positionStepAhead, _) =
+                            lane.laneLocalPositionWithoutOffset(beat + MEDIAL_DELTA_BEAT, timing);
+
+                        float lanePosition = data.Position + data.Length / 2f;
+                        Vector2 crossNow = Vector2.LerpUnclamped(
+                            positionStep.StartPosition, positionStep.EndPosition, lanePosition);
+                        Vector2 crossAhead = Vector2.LerpUnclamped(
+                            positionStepAhead.StartPosition, positionStepAhead.EndPosition, lanePosition);
+
+                        float noteSeconds = timing.ToSeconds(beat);
+                        float deltaSeconds = timing.ToSeconds(beat + MEDIAL_DELTA_BEAT) - noteSeconds;
+
+                        // The segment's own scroll speed drives the z part of the tangent.
+                        float scrollSpeed = lane.ceilStepOrLastWithSeconds(noteSeconds, timing, cindex).Speed;
+
+                        Vector3 medialLocal = laneRot * new Vector3(
+                            crossAhead.x - crossNow.x,
+                            crossAhead.y - crossNow.y,
+                            scrollSpeed * PlayerScreen.sMain.Speed * deltaSeconds);
 
                         foreach (var watch in groupChainWatcher)
                         {
                             watch.Resample(beat);
-                            var g_Pos = new Vector3(
+                            Vector3 grpPosition = new Vector3(
                                 watch.Get(TimestampIDs.Position_X),
                                 watch.Get(TimestampIDs.Position_Y),
                                 watch.Get(TimestampIDs.Position_Z)
                             );
-                            var g_Rot = Quaternion.Euler(new Vector3(
+                            Quaternion grpRotation = Quaternion.Euler(new Vector3(
                                 watch.Get(TimestampIDs.Rotation_X),
                                 watch.Get(TimestampIDs.Rotation_Y),
                                 watch.Get(TimestampIDs.Rotation_Z)
                             ));
-
-                            start = g_Rot * start + g_Pos;
-                            start = g_Rot * end + g_Pos;
-                            medialLocal = g_Rot * medialLocal;
+                            startLocal = grpPosition + grpRotation * startLocal;
+                            endLocal = grpPosition + grpRotation * endLocal;
+                            medialLocal = grpRotation * medialLocal;
                         }
 
-                        var p0 = Vector3.LerpUnclamped(start, end, laneHitobject.Position);
-                        var p1 = Vector3.LerpUnclamped(start, end, laneHitobject.Position + laneHitobject.Length);
+                        Vector3 p0 = Vector3.LerpUnclamped(startLocal, endLocal, data.Position);
+                        Vector3 p1 = Vector3.LerpUnclamped(startLocal, endLocal, data.Position + data.Length);
 
                         Vector2 hitStart = camera.WorldToScreenPoint(p0);
                         Vector2 hitEnd = camera.WorldToScreenPoint(p1);
@@ -1092,6 +1104,7 @@ namespace JANOARG.Client.Behaviors.Player
                             vanishingPoint = camera.ViewportToScreenPoint(
                                 new Vector3(ndc.x * 0.5f + 0.5f, ndc.y * 0.5f + 0.5f, 0f));
                         }
+
                         instancedLane.HitBoxes.Add(new HitScreenBox
                         {
                             Center = center,

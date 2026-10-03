@@ -262,11 +262,39 @@ namespace JANOARG.Client.Behaviors.Player
             Resample(0f);
         }
 
+        public void ReuseSameType(Storyboardable sb)
+        {
+            this.sb = sb;
+            cachedIndex.Initialize();
+            cachedTs.Initialize();
+            samples.Initialize();
+            Resample(0f);
+        }
+
         public void Resample(float atBeat)
         {
             for (int i = 0; i < sb.timestampTypes.Length; i++)
             {
                 resampleOne(ref cachedIndex[i], ref cachedTs[i], ref samples[i], i, atBeat);
+                //Debug.Log($"{}");
+            }
+        }
+
+        public void ResampleUncached(float atBeat)
+        {
+            for (int i = 0; i < sb.timestampTypes.Length; i++)
+            {
+                
+            }
+        }
+
+        public void resampleOneUncached(ref Timestamp? cts, ref float sample, int tindex, float beat)
+        {
+            var type = sb.timestampTypes[tindex];
+            var list = sb.Storyboard.FromType(type.ID);
+            for (int i = 0; i < list.Length; i++)
+            {
+                
             }
         }
 
@@ -280,53 +308,71 @@ namespace JANOARG.Client.Behaviors.Player
             var type = sb.timestampTypes[tindex];
             // this call mutates (yikes)
             var list = sb.Storyboard.FromType(type.ID);
+            sample = type.StoryboardGetter(sb);
+            Debug.Log($"Original: {sample}");
             if (list.Length == 0)
             {
+                Debug.Log($"Empty>>>");
                 return;
             }
-            var last = list.LastOrDefault();
-            if (beat >= last.Offset)
+            var last = list.Last();
+            if (beat >= last.Offset + last.Duration)
             {
+                Debug.Log($"Last Full>>>");
                 sample = last.Target;
                 return;
-            }
-            var first = list.FirstOrDefault();
-            if (beat <= first.Offset)
+            } else if (beat >= last.Offset)
             {
-                sample = type.StoryboardGetter(sb);
+                Debug.Log($"Last Interp>>>");
+                var from = float.IsNaN(last.From) ? type.StoryboardGetter(sb) : last.From;
+                sample = Mathf.LerpUnclamped(
+                    from,
+                    last.Target,
+                    last.Easing.Get((beat - last.Offset) / last.Duration)
+                );
                 return;
             }
-            var cachedTimestamp = cts ?? list[cindex];
+            var first = list.First();
+            if (beat <= first.Offset)
+            {
+                Debug.Log($"First>>>");
+                return;
+            }
+            var cachedTimestamp = list[cindex];
 
             if (cachedTimestamp.Offset > beat)
             {
-                while (cindex > 0)
+                Debug.Log($"Vor (overshot) {cachedTimestamp.Offset}:{beat}");
+                do
                 {
                     cindex -= 1;
-                    var ts = list[cindex - 1];
-                    if (ts.Offset < beat)
-                    {
-                        cachedTimestamp = ts;
-                        break;
-                    }
-                }
+                    cachedTimestamp = list[cindex];
+                } while (cachedTimestamp.Offset > beat);
             }
-            else while (cindex + 1 < list.Length)
+            else if (beat > list[cindex + 1].Offset)
             {
-                if (list[cindex + 1].Offset > beat)
+                Debug.Log($"Vor (undershot) {cachedTimestamp.Offset}:{beat}");
+                do
                 {
-                    break;
-                }
-                cindex += 1;
-                cachedTimestamp = list[cindex];
+                    cindex += 1;
+                    cachedTimestamp = list[cindex];
+                } while (cindex + 1 != list.Length && beat > list[cindex + 1].Offset);
+            } 
+            Debug.Log($"Nach {cachedTimestamp.Offset}:{beat}");
+            if (beat >= cachedTimestamp.Offset + cachedTimestamp.Duration)
+            {
+                Debug.Log("Resampled: Full");
+                sample = cachedTimestamp.Target;
+            } else
+            {
+                Debug.Log("Resampled: Interp");
+                var from = float.IsNaN(cachedTimestamp.From) ? type.StoryboardGetter(sb) : cachedTimestamp.From;
+                sample = Mathf.LerpUnclamped(
+                    from,
+                    cachedTimestamp.Target,
+                    cachedTimestamp.Easing.Get((beat - cachedTimestamp.Offset) / cachedTimestamp.Duration)
+                );
             }
-            var from = float.IsNaN(cachedTimestamp.From) ? type.StoryboardGetter(sb) : cachedTimestamp.From;
-            cts = cachedTimestamp;
-            sample = Mathf.LerpUnclamped(
-                from,
-                cachedTimestamp.Target,
-                cachedTimestamp.Easing.Get((beat - cachedTimestamp.Offset) / cachedTimestamp.Duration)
-            );
         }
     }
 }
