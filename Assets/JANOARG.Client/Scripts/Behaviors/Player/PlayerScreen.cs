@@ -989,12 +989,12 @@ namespace JANOARG.Client.Behaviors.Player
                             laneSampler.Get(Offset_Y),
                             laneSampler.Get(Offset_Z)
                         );
-                        // problem vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-                        var _lane = (Lane)lane.GetStoryboardableObject(beat);
+                        //// problem vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+                        //var _lane = (Lane)lane.GetStoryboardableObject(beat);
                         var laneEuler = _laneEuler;
                         var lane_Position = _lane_Position;
-                        Debug.Log($"Position: {_lane.Position} : {_lane_Position}");
-                        Debug.Log($"Rotation: {_lane.Rotation} : {_laneEuler}");
+                        //Debug.Log($"Position: {_lane.Position} : {_lane_Position}");
+                        //Debug.Log($"Rotation: {_lane.Rotation} : {_laneEuler}");
 
                         (LanePosition positionStep, int index) = lane.laneLocalPositionWithoutOffset(beat, timing, cindex);
                         cindex = index;
